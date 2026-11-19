@@ -1,5 +1,14 @@
 # 更新日志
 
+## 0.1.2
+
+### 新功能
+
+- **Easy Anti-Cheat 支持**：客体镜像随附 StonkGuy/FEX `eac-2610.5`（FEX-2610 加 EAC
+  兼容补丁），每次启动 Steam 前自动安装到 Steam 的 FEX-Emu 工具中，替换前先备份 Valve 的版本；
+  Steam 更新该工具后会在下次启动时重新安装。艾尔登法环 黑夜君临等部分 EAC 游戏可以在启用反作弊的
+  情况下运行。客体中可用 `/usr/lib/appledeck/steam-fex-eac status|restore|enable` 查看、恢复或重新启用。
+
 ## 0.1.1
 
 ### 新功能
