@@ -494,8 +494,13 @@ guest setup needed, with screenshots for visible UI changes.
 
 ## License
 
-AppleDeck does not yet declare a project license. Bundled third-party components keep
-their own licenses. See
+AppleDeck is released under the [MIT License](LICENSE). A few parts keep other licenses,
+as listed in [NOTICE](NOTICE):
+
+- Guest-integration and initramfs code derived from steamac stays under Apache-2.0.
+- The Linux kernel patches and config are under GPL-2.0-only.
+
+Bundled third-party components keep their own licenses; see
 [`runtime/licenses/THIRD-PARTY-NOTICES.txt`](runtime/licenses/THIRD-PARTY-NOTICES.txt).
 
 Steam and SteamOS are trademarks of Valve Corporation. D3DMetal, Metal and macOS are

@@ -434,7 +434,12 @@ printf 'shutdown\n'                     > "$RUN_DIR/control.fifo"
 
 ## 许可证
 
-AppleDeck 尚未声明项目许可证。随包的第三方组件沿用各自的许可证，见
+AppleDeck 以 [MIT 许可证](LICENSE) 发布。少数部分沿用其他许可证，详见 [NOTICE](NOTICE)：
+
+- 源自 steamac 的客体集成和 initramfs 代码仍为 Apache-2.0。
+- Linux 内核补丁和内核配置为 GPL-2.0-only。
+
+随包的第三方组件沿用各自的许可证，见
 [`runtime/licenses/THIRD-PARTY-NOTICES.txt`](runtime/licenses/THIRD-PARTY-NOTICES.txt)。
 
 Steam 和 SteamOS 是 Valve Corporation 的商标。D3DMetal、Metal 和 macOS 是 Apple Inc. 的商标。
