@@ -7,7 +7,6 @@ final class AppModel: ObservableObject {
     let host: HostCapabilities
     let vm = VMProcess()
     let deployment = DiskDeployment()
-    let compatibility = CompatibilityManager()
     @Published var showDeployment = false
     @Published private(set) var hasUsableDisk = false
     @Published var configuration: VMConfiguration {
@@ -58,17 +57,12 @@ final class AppModel: ObservableObject {
         if !vm.busy && !hasUsableDisk { showDeployment = true }
     }
     func start() {
-        guard !vm.busy, !deployment.busy, !compatibility.diskBusy, !starting else { return }
+        guard !vm.busy, !deployment.busy, !starting else { return }
         refreshDiskAvailability()
-        guard hasUsableDisk, let disk = configuration.diskImagePath else { showDeployment = true; return }
-        let backend = configuration.graphicsBackend
+        guard hasUsableDisk, configuration.diskImagePath != nil else { showDeployment = true; return }
         starting = true
-        Task {
-            defer { starting = false }
-            await compatibility.synchronize(disk, backend: backend)
-            guard configuration.diskImagePath == disk, configuration.graphicsBackend == backend, !deployment.busy else { return }
-            vm.start(configuration: configuration, host: host, display: displayCapabilities)
-        }
+        defer { starting = false }
+        vm.start(configuration: configuration, host: host, display: displayCapabilities)
     }
 
     func startFromCommandLineIfRequested() {
@@ -130,6 +124,24 @@ final class AppModel: ObservableObject {
         } catch { saveError = String(localized: "Could not save configuration (\(store.url.path)): \(error.localizedDescription)") }
     }
 
+    /// Backend selection stays editable while the VM runs: it only changes the
+    /// preference used by the next game launch, never boot-only settings.
+    func setGraphicsBackend(_ backend: GraphicsBackend) {
+        guard !deployment.busy else { return }
+        if vm.busy {
+            // While running (or transitioning) the live runtime must accept the
+            // backend before it is persisted; keep the previous config on
+            // refusal so the stored choice still matches reality.
+            guard vm.state == .running, vm.setGraphicsBackend(backend) else { return }
+        }
+        configuration.graphicsBackend = backend
+        guard let store else { return }
+        do {
+            try store.setGraphicsBackend(backend, for: host)
+            saveError = nil
+        } catch { saveError = String(localized: "Could not save configuration (\(store.url.path)): \(error.localizedDescription)") }
+    }
+
     private struct DisplayUnavailable: LocalizedError {
         var errorDescription: String? { String(localized: "Could not read the available display modes for the host display.") }
     }
@@ -183,13 +195,11 @@ final class AppModel: ObservableObject {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var vm: VMProcess?
     var deployment: DiskDeployment?
-    var compatibility: CompatibilityManager?
     private var quitting = false
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if compatibility?.diskBusy == true { return .terminateCancel }
         if let deployment, deployment.busy {
             if !quitting {
                 quitting = true
@@ -200,10 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return .terminateLater
         }
-        guard let vm, vm.busy else {
-            compatibility?.cancelDownload()
-            return .terminateNow
-        }
+        guard let vm, vm.busy else { return .terminateNow }
         if quitting { return .terminateLater }
         let alert = NSAlert()
         alert.messageText = String(localized: "The virtual machine is still running")
@@ -213,7 +220,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
         guard vm.busy else { return .terminateNow }
         quitting = true
-        compatibility?.cancelDownload()
         vm.onExit = { [weak self, weak sender] in
             self?.quitting = false
             sender?.reply(toApplicationShouldTerminate: true)
@@ -233,18 +239,12 @@ struct AppleDeckApp: App {
             MainView(model: model, vm: model.vm, deployment: model.deployment) {
                 delegate.vm = model.vm
                 delegate.deployment = model.deployment
-                delegate.compatibility = model.compatibility
             }
         }.defaultSize(width: 540, height: 620)
         .defaultLaunchBehavior(.presented)
         Settings {
-            TabView {
-                SettingsView(model: model, vm: model.vm, deployment: model.deployment)
-                    .tabItem { Label("General", systemImage: "gearshape") }
-                CompatibilitySettingsView(model: model, vm: model.vm, manager: model.compatibility)
-                    .tabItem { Label("Compatibility Tools", systemImage: "square.stack") }
-            }
-            .frame(width: 660, height: 680)
+            SettingsView(model: model, vm: model.vm, deployment: model.deployment)
+                .frame(width: 660, height: 680)
         }
     }
 }
@@ -414,29 +414,42 @@ private struct SettingsView: View {
                 if let error = displayError { Text(error).foregroundStyle(.red) }
             }.disabled(vm.busy)
             Section("Graphics Backend") {
-                Picker("Backend", selection: $model.configuration.graphicsBackend) {
+                Picker("Backend", selection: Binding(
+                    get: { model.configuration.graphicsBackend },
+                    set: { model.setGraphicsBackend($0) }
+                )) {
                     Text("Neptune / D3DMetal").tag(GraphicsBackend.neptune)
                     Text("Neptune / Mullion").tag(GraphicsBackend.mullion)
                     Text("Venus Only").tag(GraphicsBackend.venus)
                 }
-                if model.configuration.graphicsBackend == .neptune {
-                    LabeledContent("D3DMetal") {
-                        Text(model.configuration.d3dMetalFrameworkPath ?? String(localized: "None selected"))
-                            .textSelection(.enabled)
+                if vm.state == .running {
+                    Text("Backend changes apply to the next game launch; the framework, aperture, and multi-ring settings still only apply at boot.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if let applied = vm.graphicsApplied {
+                        Text("Active: \(applied.title)").font(.callout).foregroundStyle(.secondary)
                     }
-                    HStack {
-                        Button("Choose Framework") { model.chooseD3DMetalFramework() }
-                        if model.configuration.d3dMetalFrameworkPath != nil {
-                            Button("Clear") { model.configuration.d3dMetalFrameworkPath = nil }
+                    if let error = vm.graphicsError { Text(error).foregroundStyle(.red) }
+                }
+                Group {
+                    if model.configuration.graphicsBackend == .neptune {
+                        LabeledContent("D3DMetal") {
+                            Text(model.configuration.d3dMetalFrameworkPath ?? String(localized: "None selected"))
+                                .textSelection(.enabled)
+                        }
+                        HStack {
+                            Button("Choose Framework") { model.chooseD3DMetalFramework() }
+                            if model.configuration.d3dMetalFrameworkPath != nil {
+                                Button("Clear") { model.configuration.d3dMetalFrameworkPath = nil }
+                            }
                         }
                     }
-                }
-                if model.configuration.graphicsBackend != .venus {
-                    Stepper("Neptune aperture: \(model.configuration.neptuneApertureMiB) MiB",
-                            value: $model.configuration.neptuneApertureMiB, in: 8192...65536, step: 8192)
-                    Toggle("Experimental Multi-Ring (Global)", isOn: $model.configuration.neptuneMultiRing)
-                }
-            }.disabled(vm.busy)
+                    if model.configuration.graphicsBackend != .venus {
+                        Stepper("Neptune aperture: \(model.configuration.neptuneApertureMiB) MiB",
+                                value: $model.configuration.neptuneApertureMiB, in: 8192...65536, step: 8192)
+                        Toggle("Experimental Multi-Ring (Global)", isOn: $model.configuration.neptuneMultiRing)
+                    }
+                }.disabled(vm.busy)
+            }
             Section("Game Performance") {
                 Picker("Overlay Level", selection: Binding(
                     get: { model.configuration.gameHUDLevel },

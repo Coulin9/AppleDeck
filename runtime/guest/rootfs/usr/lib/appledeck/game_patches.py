@@ -2,11 +2,21 @@
 
 import fcntl
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
 import tempfile
 
+_loader = importlib.machinery.SourceFileLoader(
+    "appledeck_graphics", str(Path(__file__).with_name("appledeck_graphics.py")))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+graphics = importlib.util.module_from_spec(_spec)
+_loader.exec_module(graphics)
+
+
+MODE_FILE = Path("/run/appledeck/graphics-backend")
 
 PATCHES = {
     "1091500": "cyberpunk2077",
@@ -128,27 +138,54 @@ def prepare(profile, command, environment, cmdline):
     command, environment = list(command), dict(environment)
     app_ids = {environment[name] for name in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId")
                if environment.get(name)}
-    if app_ids != {appid} or "appledeck.gfx=neptune" not in cmdline.split():
+    if app_ids != {appid}:
         return command, environment, None
-    # The profile must wrap a selected Neptune tool, not change the selected tool.
-    if not any(Path(value).name == "neptune-launch" for value in command):
+    # The patches are Neptune-only: require a live Neptune backend and a real
+    # selected Proton launch, never the immutable cmdline or a tool name.
+    try:
+        mode = MODE_FILE.read_text().strip()
+    except OSError:
+        mode = ""
+    if mode not in ("neptune", "mullion"):
         return command, environment, None
     install_value = environment.get("STEAM_COMPAT_INSTALL_PATH", "")
     prefix_value = environment.get("STEAM_COMPAT_DATA_PATH", "")
     if not os.path.isabs(install_value) or not os.path.isabs(prefix_value):
         return command, environment, None
+    # Same qualification as the launch wrapper: a validated Proton game
+    # launch under a tool root, supported architecture/backend, and no user
+    # graphics override that would conflict with the Neptune payload.
+    # The command may still carry the outer FEX/pv-adverb wrapper chain; the
+    # Proton invocation begins after one of its "--" separators.
+    starts = [0] + [i + 1 for i, value in enumerate(command) if value == "--"]
+    info = None
+    offset = 0
+    for start in starts:
+        info = graphics.proton_invocation(command[start:], environment)
+        if info:
+            offset = start
+            break
+    if not info:
+        return command, environment, None
+    tool, verb_index = info
+    verb_index += offset
+    fex = verb_index >= 2 and Path(command[verb_index - 2]).name == "FEXCompatTool"
+    arch = graphics.select_arch(tool, environment, fex)
+    backend = "mullion" if mode == "mullion" else "d3dmetal"
+    if arch is None or (backend == "d3dmetal" and arch != "x86_64"):
+        return command, environment, None
+    if graphics.graphics_overridden(environment):
+        return command, environment, None
     install = Path(install_value).resolve()
-    executables = []
-    for index, value in enumerate(command):
-        if value.lower().endswith(".exe"):
-            candidate = Path(value).resolve()
-            if candidate.is_relative_to(install) and candidate.is_file():
-                executables.append((index, candidate))
-    if len(executables) != 1:
+    if verb_index + 1 >= len(command):
         return command, environment, None
-    index, executable = executables[0]
-    if index == 0 or command[index - 1] not in ("run", "waitforexitandrun"):
+    value = command[verb_index + 1]
+    if not value.lower().endswith(".exe"):
         return command, environment, None
+    executable = Path(value).resolve()
+    if not executable.is_relative_to(install) or not executable.is_file():
+        return command, environment, None
+    index = verb_index + 1
     name = executable.name.lower()
     identity = {"appid": appid, "prefix": str(Path(prefix_value).resolve() / "pfx"),
                 "executable": str(executable), "affinity": False}

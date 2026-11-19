@@ -55,7 +55,14 @@ public struct RuntimeOptions {
     let graphicsBackend: GraphicsBackend
     let gameHUDLevel: GameHUDLevel
     let gameHUDPosition: GameHUDPosition
+    // Support for the backend the VM was asked to start with (or an available
+    // Neptune fallback for Venus so standalone stays internally consistent).
     let neptune: NeptuneSupport?
+    // Both Neptune implementations are provisioned once, independently from the
+    // initial preference, so live switching only needs the per-launch tag.
+    let neptuneD3DMetal: NeptuneSupport?
+    let neptuneMullion: NeptuneSupport?
+    let neptuneReasons: [GraphicsBackend: String]
     let sharedFolder: VMSharedFolder?
     let network: VMNetworkConfiguration
 
@@ -230,19 +237,58 @@ public struct RuntimeOptions {
         diskFD = fd
         graphicsBackend = backend
 
-        let resolution = Self.resolveNeptune(
-            backend: backend,
+        let d3dmetal = Self.resolveNeptune(
+            backend: .neptune,
             contents: contents,
             renderer: renderer,
             frameworkPath: values["--d3dmetal-framework"],
             aperture: aperture,
             multiRing: multiRing
         )
-        neptune = resolution.support
-        if (backend == .neptune || backend == .mullion), resolution.support == nil {
-            close(fd)
-            throw RuntimeError("Neptune is not available: \(resolution.reason ?? "unknown reason")")
+        let mullion = Self.resolveNeptune(
+            backend: .mullion,
+            contents: contents,
+            renderer: renderer,
+            frameworkPath: values["--d3dmetal-framework"],
+            aperture: aperture,
+            multiRing: multiRing
+        )
+        neptuneD3DMetal = d3dmetal.support
+        neptuneMullion = mullion.support
+        var reasons: [GraphicsBackend: String] = [:]
+        if let reason = d3dmetal.reason { reasons[.neptune] = reason }
+        if let reason = mullion.reason { reasons[.mullion] = reason }
+        neptuneReasons = reasons
+        switch backend {
+        case .neptune:
+            neptune = d3dmetal.support
+        case .mullion:
+            neptune = mullion.support
+        case .venus:
+            // Venus never depends on Rosetta or the D3DMetal framework, but a
+            // validated Neptune support still drives capability advertisement
+            // and live switching.
+            neptune = d3dmetal.support ?? mullion.support
         }
+        if backend != .venus, neptune == nil {
+            close(fd)
+            throw RuntimeError("Neptune is not available: \(reasons[backend] ?? "unknown reason")")
+        }
+    }
+
+    func neptuneSupport(for backend: GraphicsBackend) -> NeptuneSupport? {
+        switch backend {
+        case .neptune: return neptuneD3DMetal
+        case .mullion: return neptuneMullion
+        case .venus: return nil
+        }
+    }
+
+    var availableBackends: Set<GraphicsBackend> {
+        var set: Set<GraphicsBackend> = [.venus]
+        if neptuneD3DMetal != nil { set.insert(.neptune) }
+        if neptuneMullion != nil { set.insert(.mullion) }
+        return set
     }
 
     private static func resolveNeptune(

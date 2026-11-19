@@ -10,7 +10,7 @@ struct RuntimeMain {
         signal(SIGPIPE, SIG_IGN)
         do {
             let arguments = Array(CommandLine.arguments.dropFirst())
-            if arguments.first == "--prepare-steamos" || arguments.first == "--compatibility-disk" {
+            if arguments.first == "--prepare-steamos" {
                 try DiskInstallerVM(arguments: arguments).run()
             }
             let options = try RuntimeOptions(arguments: arguments)

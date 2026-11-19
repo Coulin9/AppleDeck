@@ -23,16 +23,16 @@ final class VMProcess: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var workContextWarning: String?
     @Published private(set) var uu = UUPluginStatus()
-    @Published private(set) var compatibility: CompatibilityStatus?
-    @Published private(set) var compatibilityRequest: CompatibilityRequest?
-    @Published private(set) var compatibilityError: String?
+    @Published private(set) var graphicsApplied: GraphicsBackend?
+    @Published private(set) var graphicsError: String?
     @Published private(set) var runDirectory: URL?
     @Published private(set) var hostDisplayID: UInt32?
     var busy: Bool { state == .starting || state == .running || state == .stopping }
     var logPath: String? { runDirectory?.appendingPathComponent("host.log").path }
     private var runtime: Runtime?
+    private var graphicsRequested: GraphicsBackend?
+    private var graphicsTimeout: Task<Void, Never>?
     private var runtimeLog: RuntimeLog?
-    private var compatibilityTimeout: Task<Void, Never>?
     private var session = UUID()
     private var requestedStop = false
     private var fatalErrorReceived = false
@@ -43,7 +43,7 @@ final class VMProcess: ObservableObject {
         guard !busy, runtime == nil else { return }
         workContextWarning = nil
         uu = UUPluginStatus()
-        resetCompatibility()
+        resetGraphics()
         do {
             try configuration.validate(for: host)
             guard let display, let currentDisplay = HostDisplayCapabilities.detect(displayID: display.id) else {
@@ -116,9 +116,14 @@ final class VMProcess: ObservableObject {
             rt.onExit = { [weak self] result in
                 Task { @MainActor in self?.vmExited(result, session: token) }
             }
-            rt.onCompatibilityReply = { [weak self] reply in
+            rt.onGraphicsApplied = { [weak self] mode in
                 guard let self, self.session == token else { return }
-                self.receiveCompatibility(reply)
+                self.graphicsApplied = mode
+                self.graphicsError = nil
+                if mode == self.graphicsRequested {
+                    self.graphicsTimeout?.cancel()
+                    self.graphicsTimeout = nil
+                }
             }
             runtime = rt
             requestedStop = false
@@ -160,43 +165,28 @@ final class VMProcess: ObservableObject {
         catch { uu.fail((error as? LocalizedError)?.errorDescription ?? String(describing: error)) }
     }
 
-    func refreshCompatibilityInventory() {
-        guard state == .running, compatibilityRequest == nil, let runtime else { return }
-        let request = CompatibilityRequest(.list)
+    /// Live backend switch applied on the next game launch. The runtime
+    /// rejects a backend that failed startup validation.
+    @discardableResult
+    func setGraphicsBackend(_ backend: GraphicsBackend) -> Bool {
+        guard state == .running, let runtime else { return false }
         do {
-            try runtime.requestCompatibility(request)
-            compatibilityRequest = request
-            compatibilityTimeout = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(8)) }
-                catch { return }
-                guard let self, self.compatibilityRequest?.id == request.id else { return }
-                self.compatibilityRequest = nil
-                if self.compatibility == nil {
-                    self.compatibilityError = String(localized: "The SteamOS compatibility service did not respond. Try again later.")
-                }
+            try runtime.setGraphicsBackend(backend)
+            graphicsError = nil
+            graphicsRequested = backend
+            graphicsTimeout?.cancel()
+            graphicsTimeout = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, !Task.isCancelled, self.state == .running,
+                      self.graphicsRequested == backend,
+                      self.graphicsApplied != backend else { return }
+                self.graphicsError = String(localized: "The guest did not confirm the graphics backend change.")
             }
+            return true
         } catch {
-            if compatibility == nil {
-                compatibilityError = error.localizedDescription
-            }
+            graphicsError = error.localizedDescription
+            return false
         }
-    }
-
-    private func receiveCompatibility(_ reply: CompatibilityReply) {
-        guard let request = compatibilityRequest, request.id == reply.id else { return }
-        compatibilityTimeout?.cancel()
-        compatibilityTimeout = nil
-        compatibilityRequest = nil
-        compatibilityError = reply.error.map { NSLocalizedString($0, comment: "SteamOS compatibility service message") }
-        if let status = reply.status { compatibility = status }
-    }
-
-    private func resetCompatibility() {
-        compatibilityTimeout?.cancel()
-        compatibilityTimeout = nil
-        compatibilityRequest = nil
-        compatibility = nil
-        compatibilityError = nil
     }
 
     private func startFailed(_ failure: Error) {
@@ -207,9 +197,17 @@ final class VMProcess: ObservableObject {
         runtime = nil
         workContextWarning = nil
         uu = UUPluginStatus()
-        resetCompatibility()
+        resetGraphics()
         reportHandler = nil
         runtimeLog = nil
+    }
+
+    private func resetGraphics() {
+        graphicsTimeout?.cancel()
+        graphicsTimeout = nil
+        graphicsRequested = nil
+        graphicsApplied = nil
+        graphicsError = nil
     }
 
     private func receive(_ line: String, session token: UUID) {
@@ -256,7 +254,7 @@ final class VMProcess: ObservableObject {
         runtime = nil
         workContextWarning = nil
         uu = UUPluginStatus()
-        resetCompatibility()
+        resetGraphics()
         reportHandler = nil
         runtimeLog = nil
         if fatalErrorReceived || !normal || (!wasReady && !requestedStop) {

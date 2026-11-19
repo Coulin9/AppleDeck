@@ -9,7 +9,6 @@ import Foundation
 public final class DiskInstallerVM {
     private enum Operation {
         case recovery(source: String, guid: String)
-        case compatibility(writable: Bool)
     }
     private let operation: Operation
     private let target: String
@@ -20,7 +19,7 @@ public final class DiskInstallerVM {
     private var line: [UInt8] = []
 
     public init(arguments: [String]) throws {
-        let accepted: Set<String> = ["--prepare-steamos", "--compatibility-disk", "--disk", "--disk-guid", "--resources", "--run-directory"]
+        let accepted: Set<String> = ["--prepare-steamos", "--disk", "--disk-guid", "--resources", "--run-directory"]
         var values: [String: String] = [:]
         var index = 0
         while index < arguments.count {
@@ -36,15 +35,11 @@ public final class DiskInstallerVM {
               let runPath = values["--run-directory"], runPath.hasPrefix("/") else {
             throw RuntimeError("missing installer options")
         }
-        if let source = values["--prepare-steamos"], source.hasPrefix("/"),
-           let guid = values["--disk-guid"], UUID(uuidString: guid) != nil, values["--compatibility-disk"] == nil {
-            operation = .recovery(source: source, guid: guid.lowercased())
-        } else if let mode = values["--compatibility-disk"], mode == "read" || mode == "write",
-                  values["--prepare-steamos"] == nil, values["--disk-guid"] == nil {
-            operation = .compatibility(writable: mode == "write")
-        } else {
+        guard let source = values["--prepare-steamos"], source.hasPrefix("/"),
+              let guid = values["--disk-guid"], UUID(uuidString: guid) != nil else {
             throw RuntimeError("invalid disk operation")
         }
+        operation = .recovery(source: source, guid: guid.lowercased())
         self.target = target
         resources = URL(fileURLWithPath: resourcePath, isDirectory: true)
         runDirectory = URL(fileURLWithPath: runPath, isDirectory: true)
@@ -65,11 +60,7 @@ public final class DiskInstallerVM {
                     throw RuntimeError("missing installer resource: \(name)")
                 }
             }
-            let writable: Bool
-            switch operation {
-            case .recovery: writable = true
-            case .compatibility(let writesDisk): writable = writesDisk
-            }
+            let writable = true
             let targetFD = try openFile(target, flags: (writable ? O_RDWR : O_RDONLY) | O_NOFOLLOW)
             guard flock(targetFD, LOCK_EX | LOCK_NB) == 0 else {
                 throw RuntimeError(String(localized: "The SteamOS disk is in use. Shut down the virtual machine first."))
@@ -89,13 +80,6 @@ public final class DiskInstallerVM {
                 }
                 supportingDisk = source
                 cmdline = "appledeck.recovery=1 appledeck.target_guid=\(guid)"
-            case .compatibility:
-                try SteamOSDisk.validateSystem(at: URL(fileURLWithPath: target))
-                supportingDisk = resources.appendingPathComponent("appledeck-layer.img").path
-                guard FileManager.default.isReadableFile(atPath: supportingDisk) else {
-                    throw RuntimeError(String(localized: "The AppleDeck guest components could not be found."))
-                }
-                cmdline = "appledeck.compatibility=\(writable ? "write" : "read")"
             }
             let console = try openFile(runDirectory.appendingPathComponent("console.log").path,
                                        flags: O_WRONLY | O_CREAT | O_EXCL)
@@ -115,11 +99,6 @@ public final class DiskInstallerVM {
                 try check(krun_set_kernel(context, kernel, 0, initrd, "console=hvc0 loglevel=4 \(cmdline)"), "set installer kernel")
                 try check(krun_add_disk2(context, "vda", target, 0, !writable), "attach target disk")
                 try check(krun_add_disk2(context, "vdb", supportingDisk, 0, true), "attach supporting disk read-only")
-                if case .compatibility = operation {
-                    let exchange = runDirectory.appendingPathComponent("exchange", isDirectory: true)
-                    try check(krun_add_virtiofs4(context, "appledeck-compatibility", exchange.path, 0, false,
-                                                UInt32(KRUN_SEMANTICS_LINUX_SIMPLIFIED)), "attach compatibility files")
-                }
             } catch {
                 _ = krun_free_ctx(context)
                 throw error

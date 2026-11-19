@@ -78,15 +78,6 @@ public final class SteamOSPreparation: @unchecked Sendable {
         try SteamOSDisk.validateSystem(at: target)
     }
 
-    public func accessCompatibilityDisk(_ target: URL, writing: Bool, helper: URL, resources: URL,
-                                        runDirectory: URL) throws -> CompatibilityReply {
-        try runDiskHelper(helper: helper, resources: resources, runDirectory: runDirectory,
-                          arguments: ["--compatibility-disk", writing ? "write" : "read", "--disk", target.path],
-                          onProgress: { _ in })
-        let reply = runDirectory.appendingPathComponent("exchange/reply.json")
-        return try JSONDecoder().decode(CompatibilityReply.self, from: Data(contentsOf: reply))
-    }
-
     private func runDiskHelper(helper: URL, resources: URL, runDirectory: URL, arguments: [String],
                                onProgress: @escaping @Sendable (String) -> Void) throws {
         try checkCancellation()

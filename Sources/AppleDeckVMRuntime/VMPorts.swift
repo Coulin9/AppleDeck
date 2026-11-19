@@ -24,13 +24,21 @@ final class VMPorts {
     private var uuLine = [UInt8]()
     private var uuOverflow = false
     private var uuReady = false
-    private var compatibilityRead: Int32 = -1
-    private var compatibilityWrite: Int32 = -1
-    private var compatibilityInput: Int32 = -1
-    private var compatibilityOutput: Int32 = -1
-    private var compatibilityLine = [UInt8]()
-    private var compatibilityOverflow = false
-    var onCompatibilityReply: ((CompatibilityReply) -> Void)?
+    private var graphicsRead: Int32 = -1
+    private var graphicsWrite: Int32 = -1
+    private var graphicsInput: Int32 = -1
+    private var graphicsOutput: Int32 = -1
+    private var graphicsLine = [UInt8]()
+    private var graphicsOverflow = false
+    private var graphicsPending = [UInt8]()
+    private var graphicsWriteSource: DispatchSourceWrite?
+    private var graphicsReady = false
+    // The host owns the desired preference: retained for guest reconnects and
+    // early UI changes, and never marked applied on a stale acknowledgement.
+    private var graphicsDesired: GraphicsBackend?
+    private var graphicsApplied: GraphicsBackend?
+    var onGraphicsApplied: ((GraphicsBackend) -> Void)?
+    var onGraphicsRequest: ((GraphicsBackend) throws -> Void)?
     private var telemetryRead: Int32 = -1
     private var telemetryWrite: Int32 = -1
     private var telemetryInput: Int32 = -1
@@ -110,8 +118,7 @@ final class VMPorts {
             padRead = pad.0; padOutput = pad.1; padInput = pad.2; padWrite = pad.3
             let uu = try makePort()
             (uuRead, uuOutput, uuInput, uuWrite) = uu
-            let compatibility = try makePort()
-            (compatibilityRead, compatibilityOutput, compatibilityInput, compatibilityWrite) = compatibility
+            (graphicsRead, graphicsOutput, graphicsInput, graphicsWrite) = try makePort()
             let telemetry = try makePort()
             (telemetryRead, telemetryOutput, telemetryInput, telemetryWrite) = telemetry
             (clipboardRead, clipboardOutput, clipboardInput, clipboardWrite) = try makePort()
@@ -119,8 +126,8 @@ final class VMPorts {
                 guard fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 else { throw Self.error("fcntl CLOEXEC failed") }
             }
             for fd in [master, progressRead, padRead, padWrite, uuRead, uuWrite, telemetryRead, telemetryWrite] { try nonblocking(fd) }
-            try nonblocking(compatibilityRead)
-            try nonblocking(compatibilityWrite)
+            try nonblocking(graphicsRead)
+            try nonblocking(graphicsWrite)
             try nonblocking(clipboardRead)
             try nonblocking(clipboardWrite)
         } catch {
@@ -157,8 +164,8 @@ final class VMPorts {
         try check(krun_add_console_port_inout(context, UInt32(console), "fx.pad", padInput, padOutput), "fx.pad")
         try check(krun_add_console_port_inout(context, UInt32(console), "fx.telemetry", telemetryInput, telemetryOutput), "fx.telemetry")
         try check(krun_add_console_port_inout(context, UInt32(console), "fx.uu", uuInput, uuOutput), "fx.uu")
-        try check(krun_add_console_port_inout(context, UInt32(console), "fx.compatibility",
-                                              compatibilityInput, compatibilityOutput), "fx.compatibility")
+        try check(krun_add_console_port_inout(context, UInt32(console), "fx.graphics",
+                                              graphicsInput, graphicsOutput), "fx.graphics")
         try check(krun_add_console_port_inout(context, UInt32(console), "fx.clipboard",
                                               clipboardInput, clipboardOutput), "fx.clipboard")
     }
@@ -219,7 +226,7 @@ final class VMPorts {
         try watch(progressRead) { [weak self] bytes in self?.readProgress(bytes) }
         try watch(padRead) { [weak self] bytes in self?.readPad(bytes) }
         try watch(uuRead) { [weak self] bytes in self?.readUU(bytes) }
-        try watch(compatibilityRead) { [weak self] bytes in self?.readCompatibility(bytes) }
+        try watch(graphicsRead) { [weak self] bytes in self?.readGraphics(bytes) }
         try watch(clipboardRead) { [weak self] bytes in self?.clipboard.receive(bytes) }
         try watch(fifoRead) { [weak self] bytes in self?.readFIFO(bytes) }
         physicalGamepad.start()
@@ -317,22 +324,68 @@ final class VMPorts {
         }
     }
 
-    func sendCompatibility(_ request: CompatibilityRequest) throws {
+    /// Records the desired backend and forwards it once the guest service is
+    /// connected. A later ack only counts when it matches the newest desired.
+    func setGraphicsBackend(_ backend: GraphicsBackend) throws {
         guard !closed else { throw RuntimeError(String(localized: "The SteamOS connection is closed.")) }
-        var data = try JSONEncoder().encode(request)
-        data.append(10)
-        guard data.count <= 512 else { throw RuntimeError(String(localized: "The compatibility request is too long.")) }
-        var count: Int
-        repeat {
-            count = data.withUnsafeBytes { Darwin.write(compatibilityWrite, $0.baseAddress!, $0.count) }
-        } while count < 0 && errno == EINTR
-        guard count == data.count else { throw RuntimeError(String(localized: "Could not send the compatibility request. Try again later.")) }
+        graphicsDesired = backend
+        sendGraphicsBackend()
     }
 
-    private func readCompatibility(_ bytes: [UInt8]) {
-        for line in Self.lines(bytes, buffer: &compatibilityLine, overflow: &compatibilityOverflow) {
-            if let reply = try? JSONDecoder().decode(CompatibilityReply.self, from: Data(line.utf8)) {
-                onCompatibilityReply?(reply)
+    private func sendGraphicsBackend() {
+        guard graphicsReady, let backend = graphicsDesired else { return }
+        graphicsPending = Array(("backend \(backend.rawValue)\n".utf8))
+        flushGraphics()
+    }
+
+    private func flushGraphics() {
+        while !graphicsPending.isEmpty {
+            let written = graphicsPending.withUnsafeBytes { Darwin.write(graphicsWrite, $0.baseAddress!, $0.count) }
+            if written > 0 {
+                graphicsPending.removeFirst(written)
+            } else if written < 0 && errno == EINTR {
+                continue
+            } else if written < 0 && errno == EAGAIN {
+                if graphicsWriteSource == nil, let duplicate = try? duplicateForSource(graphicsWrite) {
+                    let source = DispatchSource.makeWriteSource(fileDescriptor: duplicate, queue: .main)
+                    source.setEventHandler { [weak self] in
+                        guard let self, !self.closed else { return }
+                        self.flushGraphics()
+                    }
+                    source.setCancelHandler { Darwin.close(duplicate) }
+                    graphicsWriteSource = source
+                    source.resume()
+                }
+                return
+            } else {
+                graphicsPending.removeAll()
+                report("APPLEDECK graphics error: cannot write backend request")
+                return
+            }
+        }
+        graphicsWriteSource?.cancel()
+        graphicsWriteSource = nil
+    }
+
+    private func readGraphics(_ bytes: [UInt8]) {
+        for line in Self.lines(bytes, buffer: &graphicsLine, overflow: &graphicsOverflow) {
+            if line == "ready" {
+                graphicsReady = true
+                sendGraphicsBackend()
+                continue
+            }
+            let words = line.split(separator: " ")
+            if words.count == 2, words[0] == "applied",
+               let mode = GraphicsBackend(rawValue: String(words[1])) {
+                guard graphicsReady, mode == graphicsDesired else {
+                    report("APPLEDECK graphics ignoring stale ack: \(line)")
+                    continue
+                }
+                graphicsApplied = mode
+                report("APPLEDECK graphics applied \(mode.rawValue)")
+                onGraphicsApplied?(mode)
+            } else {
+                report("APPLEDECK graphics \(line)")
             }
         }
     }
@@ -478,6 +531,19 @@ final class VMPorts {
             }
             return
         }
+        if command.hasPrefix("graphics-backend ") {
+            let name = String(command.dropFirst("graphics-backend ".count))
+            guard let mode = GraphicsBackend(rawValue: name), let onGraphicsRequest else {
+                reply("error invalid graphics backend"); return
+            }
+            do {
+                try onGraphicsRequest(mode)
+                reply("ok graphics-backend \(name) requested")
+            } catch {
+                reply("error \(error)")
+            }
+            return
+        }
         if command == "uu install" || command == "uu status" {
             do {
                 try sendUU(command == "uu install" ? .install : .status)
@@ -559,6 +625,10 @@ final class VMPorts {
         closed = true
         ready = false
         uuReady = false
+        graphicsReady = false
+        graphicsWriteSource?.cancel()
+        graphicsWriteSource = nil
+        graphicsPending.removeAll()
         release?.cancel(); release = nil
         for source in sources { source.cancel() }
         sources.removeAll()

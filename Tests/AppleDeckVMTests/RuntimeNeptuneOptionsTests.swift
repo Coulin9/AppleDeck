@@ -105,7 +105,11 @@ final class RuntimeNeptuneOptionsTests: XCTestCase {
     func testVenusCanStillBeSelectedWithoutD3DMetal() throws {
         try withPackagedRuntime(["--graphics-backend", "venus"]) { options in
             XCTAssertEqual(options.graphicsBackend, .venus)
-            XCTAssertNil(options.neptune)
+            // Venus itself never depends on Rosetta or the framework; the
+            // initial support is simply any validated Neptune fallback.
+            XCTAssertEqual(options.neptune != nil,
+                           options.neptuneD3DMetal != nil || options.neptuneMullion != nil)
+            XCTAssertTrue(options.availableBackends.contains(.venus))
         }
     }
 

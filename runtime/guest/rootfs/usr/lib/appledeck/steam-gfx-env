@@ -12,6 +12,14 @@ set -euo pipefail
 gfx=${XDG_RUNTIME_DIR:?}/steam/env/gfx.txt
 [[ -f $gfx ]] || exit 0
 
+# Route pressure-vessel game containers through the backend-selection wrapper,
+# but only as a default: an explicit stock/user gfx.txt entry or an inherited
+# PRESSURE_VESSEL_BWRAP keeps its delegate.
+if ! grep -q '^PRESSURE_VESSEL_BWRAP=' "$gfx" && [[ -z ${PRESSURE_VESSEL_BWRAP:-} ]]; then
+    printf 'PRESSURE_VESSEL_BWRAP=/usr/lib/appledeck/appledeck-graphics-wrap\n' >> "$gfx"
+    echo "steam-gfx-env: PRESSURE_VESSEL_BWRAP defaulted to appledeck-graphics-wrap" >&2
+fi
+
 # VKD3D_DISABLE_EXTENSIONS belongs in steam.service's inherited environment,
 # not gfx.txt: the launch wrapper overwrites inherited variables from this file.
 # Leave explicit stock/user lists alone, including their precedence over titles.

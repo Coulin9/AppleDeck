@@ -147,6 +147,24 @@ final class ConfigurationTests: XCTestCase {
         }
     }
 
+    func testGraphicsBackendPersistsWithoutChangingStoredVMSettings() throws {
+        try withTemporaryDirectory { directory in
+            let store = ConfigurationStore(url: directory.appendingPathComponent("configuration.json"))
+            var stored = VMConfiguration(
+                cpuCount: 3, memoryGiB: 5, graphicsBackend: .venus,
+                display: VMDisplayConfiguration(width: 1920, height: 1080, refreshRate: 90),
+                sharedFolder: VMSharedFolder(path: "/tmp/share", readOnly: true),
+                network: VMNetworkConfiguration(proxyEnabled: true, proxyURL: "https://localhost:8443")
+            )
+            try store.save(stored, for: host())
+            for backend in [GraphicsBackend.mullion, .neptune, .venus] {
+                try store.setGraphicsBackend(backend, for: host())
+                stored.graphicsBackend = backend
+                XCTAssertEqual(try store.load(for: host()), stored)
+            }
+        }
+    }
+
     func testGameHUDLevelsAndPositionsRoundTripWithStableValues() throws {
         let levels: [(GameHUDLevel, Int)] = [(.off, 0), (.fps, 1), (.compact, 2), (.detailed, 3), (.full, 4)]
         let positions: [(GameHUDPosition, String)] = [

@@ -1,4 +1,5 @@
 import importlib.machinery
+import struct
 import importlib.util
 from pathlib import Path
 import sys
@@ -21,19 +22,44 @@ class GamePatchTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.mode = self.root / "graphics-backend"
+        self.mode.write_text("neptune\n")
+        patcher = patch.object(game_patches, "MODE_FILE", self.mode)
+        self.addCleanup(patcher.stop)
+        patcher.start()
         self.install = self.root / "Steam Library/Game"
         self.install.mkdir(parents=True)
         self.environment = {
             "SteamAppId": "1091500",
             "STEAM_COMPAT_INSTALL_PATH": str(self.install),
             "STEAM_COMPAT_DATA_PATH": str(self.root / "compatdata/1091500"),
+            "STEAM_COMPAT_TOOL_PATHS": str(self.root / "Steam/compatibilitytools.d/proton-11"),
         }
+        self.tool = self.root / "Steam/compatibilitytools.d/proton-11"
+        self.tool.mkdir(parents=True)
+        (self.tool / "proton").touch()
+        (self.tool / "proton").chmod(0o755)
+        wine = self.tool / "files/lib/wine"
+        unix = wine / "x86_64-unix"
+        unix.mkdir(parents=True)
+        elf = bytearray(64)
+        elf[:4] = b"\x7fELF"
+        struct.pack_into("<H", elf, 18, 62)
+        (unix / "ntdll.so").write_bytes(bytes(elf))
+        dxvk = wine / "dxvk/x86_64-windows"
+        dxvk.mkdir(parents=True)
+        pe = bytearray(512)
+        pe[:2] = b"MZ"
+        struct.pack_into("<I", pe, 0x3C, 0x80)
+        pe[0x80:0x84] = b"PE\0\0"
+        struct.pack_into("<H", pe, 0x84, 0x8664)
+        (dxvk / "d3d11.dll").write_bytes(bytes(pe))
 
     def command(self, name, *arguments):
         executable = self.install / name
         executable.touch()
         return ["FEX", "waitforexitandrun", "--", "runtime", "--verb=run", "--",
-                "/Steam/compatibilitytools.d/appledeck-neptune/runtime/neptune-launch",
+                str(self.tool / "proton"),
                 "waitforexitandrun", str(executable), *arguments]
 
     def test_cyberpunk_only_changes_game_arguments(self):
@@ -53,6 +79,10 @@ class GamePatchTests(unittest.TestCase):
                 (dict(self.environment, SteamAppId="42"), "appledeck.gfx=neptune", command),
                 (self.environment, "appledeck.gfx=venus", command),
                 (self.environment, "appledeck.gfx=neptune", ["stock-proton", "run", command[-1]])):
+            if cmdline == "appledeck.gfx=venus":
+                self.mode.write_text("venus\n")
+            else:
+                self.mode.write_text("neptune\n")
             with self.subTest(environment=environment, cmdline=cmdline, candidate=candidate):
                 changed, actual_env, identity = game_patches.prepare(
                     "cyberpunk2077", candidate, environment, cmdline)
@@ -131,7 +161,7 @@ class GamePatchTests(unittest.TestCase):
             "nightreign", command, environment, "appledeck.gfx=neptune")
         self.assertEqual(actual, command)
         self.assertTrue(identity["affinity"])
-        self.assertEqual(identity["prefix"], str(self.root / "compatdata/1091500/pfx"))
+        self.assertEqual(identity["prefix"], str(Path(self.root / "compatdata/1091500/pfx").resolve()))
 
     def test_affinity_members_follow_this_launch_and_reject_reused_pids(self):
         scope = "0::/user.slice/app-steam-app2622380-101.scope\n"

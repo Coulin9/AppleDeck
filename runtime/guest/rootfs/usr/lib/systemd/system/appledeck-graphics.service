@@ -1,0 +1,13 @@
+[Unit]
+Description=AppleDeck graphics backend control (fx.graphics)
+ConditionPathExists=/dev/virtio-ports/fx.graphics
+
+[Service]
+ExecStartPre=-/usr/lib/appledeck/steam-graphics-seed
+ExecStart=/usr/lib/appledeck/steam-graphics-control
+Restart=always
+RestartSec=2
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

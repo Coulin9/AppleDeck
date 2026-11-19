@@ -64,7 +64,7 @@ input_digest() { # NAME KEY VALUE [KEY VALUE ...]
 # Build and package must agree on which inputs produced the Swift frontend.
 swift_input_digest() {
     input_digest swift \
-        swift_sources "$(find "$ROOT/Sources" "$ROOT/Tests" -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}')" \
+        swift_sources "$(find "$ROOT/Sources" -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}')" \
         package "$(sha256_file "$ROOT/Package.swift")" \
         info "$(sha256_file "$ROOT/Info.plist")" \
         entitlements "$(sha256_file "$ROOT/AppleDeckVM.entitlements")" \

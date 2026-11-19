@@ -33,9 +33,9 @@ public final class Runtime {
     /// guest window and runtime services. libkrun may terminate the process on
     /// a normal guest shutdown instead of returning to its caller.
     public var onExit: (@Sendable (Int32) -> Void)?
-    public var onCompatibilityReply: ((CompatibilityReply) -> Void)? {
-        get { ports.onCompatibilityReply }
-        set { ports.onCompatibilityReply = newValue }
+    public var onGraphicsApplied: ((GraphicsBackend) -> Void)? {
+        get { ports.onGraphicsApplied }
+        set { ports.onGraphicsApplied = newValue }
     }
 
     /// Takes ownership of options.diskFD only after initialization succeeds.
@@ -54,6 +54,7 @@ public final class Runtime {
         ports = try VMPorts(runDirectory: options.runDirectory)
         display.hardwareSample = { [weak ports] in ports?.hardwareSample() }
         input = try VMInput()
+        ports.onGraphicsRequest = { [weak self] mode in try self?.setGraphicsBackend(mode) }
         diskFD = options.diskFD
         workContext.onReport = { [weak display] line in
             display?.setWorkContextWarning(WorkContextNotice.warning(for: line))
@@ -73,6 +74,21 @@ public final class Runtime {
             setenv("RENDER_SERVER_EXEC_PATH", options.renderer.path, 1)
             setenv("VKR_VULKAN_DRIVER", options.vulkanDriver.path, 1)
             setenv("VKR_GPU_BUDGET_MIB", "4096", 1)
+            // Host-only trusted allowlists, set only for validated supports so
+            // a guest tag can never steer a worker to an unvalidated adapter.
+            if let support = options.neptuneD3DMetal {
+                setenv("NPT_APPLEDECK_D3DMETAL_ADAPTER", support.adapter.path, 1)
+                if case .d3dmetal(let framework, _) = support.backend {
+                    setenv("D3DMETAL_FRAMEWORK_PATH", framework.path, 1)
+                }
+                // The arm64 process reporting the capset cannot probe an x86_64 library.
+                setenv("NPT_CAPSET_D3D12", "1", 1)
+                setenv("DMN_LOG", "warn", 1)
+            }
+            if let support = options.neptuneMullion {
+                setenv("NPT_APPLEDECK_MULLION_ADAPTER", support.adapter.path, 1)
+                setenv("MULLION_LOG_PATH", "none", 0)
+            }
             if let neptune = options.neptune {
                 setenv("NPT_D3D11_LIBRARY_PATH", neptune.adapter.path, 1)
                 setenv("NPT_DXGI_LIBRARY_PATH", neptune.adapter.path, 1)
@@ -81,14 +97,9 @@ public final class Runtime {
                 switch neptune.backend {
                 case .d3dmetal(let framework, let version):
                     setenv("NPT_BACKEND", "d3dmetal", 1)
-                    // The arm64 process reporting the capset cannot probe an x86_64 library.
-                    setenv("NPT_CAPSET_D3D12", "1", 1)
-                    setenv("D3DMETAL_FRAMEWORK_PATH", framework.path, 1)
-                    setenv("DMN_LOG", "warn", 1)
                     report("APPLEDECK neptune enabled framework=\(framework.path) version=\(version ?? "unknown") \(settings)")
                 case .mullion:
                     setenv("NPT_BACKEND", "mullion", 1)
-                    setenv("MULLION_LOG_PATH", "none", 0)
                     report("APPLEDECK neptune enabled backend=mullion \(settings)")
                 }
             }
@@ -110,6 +121,8 @@ public final class Runtime {
             let telemetrySampler = options.resources.appendingPathComponent("macmon")
             var cmdline = "console=hvc0 loglevel=4 rootwait appledeck.ssh=1 appledeck.steam_client=deck"
             cmdline += HostCPUInfo.kernelArguments(sampler: telemetrySampler)
+            // Boot-time seed only; the live authority is the fx.graphics port.
+            cmdline += " appledeck.graphics=\(options.graphicsBackend.rawValue)"
             if let neptune = options.neptune {
                 cmdline += " appledeck.gfx=neptune"
                 if case .mullion = neptune.backend { cmdline += " appledeck.neptune.backend=mullion" }
@@ -131,7 +144,8 @@ public final class Runtime {
             let venus: UInt32 = 1 << 6
             let noVirgl: UInt32 = 1 << 7
             let neptuneFlag: UInt32 = 1 << 15
-            let gpuFlags = venus | noVirgl | (options.neptune == nil ? 0 : neptuneFlag)
+            let anyNeptune = options.neptuneD3DMetal != nil || options.neptuneMullion != nil
+            let gpuFlags = venus | noVirgl | (anyNeptune ? neptuneFlag : 0)
             let apertureMiB = options.neptune?.apertureMiB ?? 8192
             try krunCheck("krun_set_gpu_options2", krun_set_gpu_options2(ctx, gpuFlags, UInt64(apertureMiB) << 20))
             let mode = options.display
@@ -159,6 +173,8 @@ public final class Runtime {
             }, onGameFrame: { [weak self] sample in
                 self?.display.receiveGameFrame(sample)
             })
+            // Desired mode is sent as soon as the guest control service is up.
+            try ports.setGraphicsBackend(options.graphicsBackend)
             ports.startTelemetry(sampler: telemetrySampler)
             display.show(input: input, mode: currentDisplayMode, screenID: initialScreenID,
                          onScreenChange: { [weak self] screen in self?.hostScreenChanged(screen) },
@@ -256,10 +272,14 @@ public final class Runtime {
         try ports.sendUU(.status)
     }
 
-    public func requestCompatibility(_ request: CompatibilityRequest) throws {
+    /// Live backend switch, applied on the next game launch. Availability was
+    /// validated once at startup; refuse anything else.
+    public func setGraphicsBackend(_ backend: GraphicsBackend) throws {
         guard !stopping else { throw RuntimeError(String(localized: "The virtual machine is shutting down.")) }
-        guard request.action == .list else { throw RuntimeError(String(localized: "Compatibility tools are read-only while SteamOS is running.")) }
-        try ports.sendCompatibility(request)
+        guard options.availableBackends.contains(backend) else {
+            throw RuntimeError(options.neptuneReasons[backend] ?? String(localized: "This graphics backend is not available."))
+        }
+        try ports.setGraphicsBackend(backend)
     }
 
     public func shutdown() {

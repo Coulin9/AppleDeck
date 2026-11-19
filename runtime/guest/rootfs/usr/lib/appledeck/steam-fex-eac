@@ -8,7 +8,7 @@
 #   steam-fex-eac status    print installed/payload describes and state
 # Test overrides: APPLEDECK_STEAM_ROOT, APPLEDECK_FEX_EAC_PAYLOAD,
 # APPLEDECK_FEX_EAC_STATE.
-import filecmp
+import json
 import os
 from pathlib import Path
 import shutil
@@ -54,12 +54,24 @@ def complete(root):
     return all((root / name).is_file() and (root / name).stat().st_size > 0 for name in FILES)
 
 
-def identical(src, dst):
-    return dst.is_file() and filecmp.cmp(src, dst, shallow=False)
+def installed_bytes(source, name):
+    """Bytes that should be installed for a payload file. The base config
+    template gains the Vulkan thunk (the x86 rootfs only ships freedreno
+    ICDs); every other file installs verbatim."""
+    data = (source / name).read_bytes()
+    if name == Path("ConfigTemplate.json") and source == payload_dir():
+        config = json.loads(data)
+        config.setdefault("ThunksDB", {}).setdefault("Vulkan", "1")
+        data = (json.dumps(config, indent=4) + "\n").encode()
+    return data
+
+
+def identical(source, dst, name):
+    return dst.is_file() and dst.read_bytes() == installed_bytes(source, name)
 
 
 def all_installed(payload, tool):
-    return all(identical(payload / name, tool / name) for name in FILES)
+    return all(identical(payload, tool / name, name) for name in FILES)
 
 
 def process_running(name):
@@ -100,11 +112,11 @@ def swap_in(source, tool):
         dst = tool / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         temporary = dst.with_name("." + dst.name + ".new")
-        shutil.copyfile(src, temporary)
+        temporary.write_bytes(installed_bytes(source, name))
         shutil.copymode(src, temporary)
         temporary.replace(dst)
     for name in FILES:
-        if not identical(source / name, tool / name):
+        if not identical(source, tool / name, name):
             fail("install incomplete: " + str(tool / name) + " does not match the payload")
 
 

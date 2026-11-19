@@ -3,6 +3,7 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -29,8 +30,8 @@ def make_tool(root, describe, tag):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes("{}-{}".format(tag, name).encode() * 64)
         path.chmod(0o755)
-    for name in ("FEXCompatTool", "ConfigTemplate.json"):
-        (tool / name).write_bytes("{}-{}".format(tag, name).encode() * 32)
+    (tool / "FEXCompatTool").write_bytes("{}-FEXCompatTool".format(tag).encode() * 32)
+    (tool / "ConfigTemplate.json").write_bytes("{}-ConfigTemplate.json".format(tag).encode() * 32)
     (tool / "VERSIONS.txt").write_text(versions(describe))
     return tool
 
@@ -43,6 +44,8 @@ class FexEacTests(unittest.TestCase):
         self.steam = base / "steam"
         self.state = base / "state"
         self.payload = make_tool(base, "eac-2610.5", "payload")
+        template = {"Config": {"DiskCache": "1", "ProfileStats": "1"}}
+        (self.payload / "ConfigTemplate.json").write_text(json.dumps(template))
         self.tool = make_tool(self.steam, "FEX-2607-abcdefg", "valve")
         environment = {
             "APPLEDECK_STEAM_ROOT": str(self.steam),
@@ -63,8 +66,8 @@ class FexEacTests(unittest.TestCase):
 
     def assert_installed(self):
         for name in fex_eac.FILES:
-            self.assertTrue(fex_eac.filecmp.cmp(self.payload / name, self.tool / name, shallow=False),
-                            str(name))
+            self.assertEqual(fex_eac.installed_bytes(self.payload, name),
+                             (self.tool / name).read_bytes(), str(name))
 
     def test_apply_installs_payload_and_backs_up_valve_build(self):
         fex_eac.apply()
@@ -133,6 +136,37 @@ class FexEacTests(unittest.TestCase):
             fex_eac.restore()
         self.assertEqual(raised.exception.code, 1)
         self.assertIn("no Valve build backed up", (self.state / "status").read_text())
+
+
+
+    def test_installed_template_enables_vulkan_thunk(self):
+        fex_eac.apply()
+        config = json.loads((self.tool / "ConfigTemplate.json").read_text())
+        payload_config = json.loads((self.payload / "ConfigTemplate.json").read_text())
+        self.assertEqual(config["ThunksDB"], {"Vulkan": "1"})
+        config.pop("ThunksDB")
+        self.assertEqual(config, payload_config)
+
+    def test_second_apply_is_noop_for_installed_files(self):
+        fex_eac.apply()
+        stat = (self.tool / "ConfigTemplate.json").stat()
+        fex_eac.apply()
+        after = (self.tool / "ConfigTemplate.json").stat()
+        self.assertEqual((after.st_ino, after.st_mtime_ns), (stat.st_ino, stat.st_mtime_ns))
+        self.assertIn("installed", (self.state / "status").read_text())
+
+    def test_existing_vulkan_value_is_kept(self):
+        template = {"Config": {"DiskCache": "1"}, "ThunksDB": {"Vulkan": "0"}}
+        (self.payload / "ConfigTemplate.json").write_text(json.dumps(template))
+        fex_eac.apply()
+        config = json.loads((self.tool / "ConfigTemplate.json").read_text())
+        self.assertEqual(config["ThunksDB"]["Vulkan"], "0")
+
+    def test_restore_writes_exact_valve_template_bytes(self):
+        valve_bytes = (self.tool / "ConfigTemplate.json").read_bytes()
+        fex_eac.apply()
+        fex_eac.restore()
+        self.assertEqual((self.tool / "ConfigTemplate.json").read_bytes(), valve_bytes)
 
 
 if __name__ == "__main__":

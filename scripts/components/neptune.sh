@@ -116,6 +116,17 @@ CROSS
 build_wine x86_64 x86_64 x86_64-linux-gnu-gcc x86_64-linux-gnu
 # Proton installs its ARM64EC graphics DLLs in the aarch64-windows slot.
 build_wine arm64ec aarch64 gcc aarch64-linux-gnu
+# WINEDLLPATH bridge: one directory per arch exposing nptunix in both PE and
+# unix roles, relative so the payload stays relocatable.
+for arch in x86_64 aarch64; do
+    mkdir -p "$payload/bridge/$arch"
+    ln -sfn "../../$arch-windows/nptunix.dll" "$payload/bridge/$arch/nptunix.dll"
+    ln -sfn "../../$arch-unix/nptunix.so" "$payload/bridge/$arch/nptunix.so"
+    # The bridge links resolve inside the staged root; fail the build if the
+    # PE or unix target is missing or the relative depth drifted.
+    test -f "$payload/bridge/$arch/nptunix.dll"
+    test -f "$payload/bridge/$arch/nptunix.so"
+done
 BUILD
 
 python3 - "$OUTDIR/root/usr/lib/appledeck/neptune" "$SOURCE_COMMIT" "$SOURCE_INPUT" "$TOOLCHAIN_SHA" "$INPUT" <<'PY'

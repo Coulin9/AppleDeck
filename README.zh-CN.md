@@ -46,8 +46,8 @@ AppleDeck 受 [steamac](https://github.com/fxgl/steamac) 项目启发。
   和 fence 通过共享内存环与 doorbell 完成，无需逐次往返；也可只用 Venus（Vulkan）。
 - **支持 Easy Anti-Cheat**：默认使用 EAC 反作弊修补版 FEX，部分使用 EAC 的游戏（例如艾尔登法环
   黑夜君临）可以在启用反作弊的情况下运行。
-- **兼容层管理**：在 Mac 上安装 Steam 官方 Proton 和 GE-Proton，并生成对应的
-  `AppleDeck Neptune · <版本>` 兼容工具供 Steam 选用。
+- **实时图形后端**：Venus（Vulkan）、Neptune / D3DMetal、Neptune / Mullion 可随时切换，
+  选择在下一次游戏启动时生效，游戏保留 Steam 原选的兼容工具。
 - **原生显示路径**：客体 scanout 以 Metal 纹理导入，CPU 不复制像素；支持最高 8K 的自定义
   分辨率和刷新率、原生全屏（含刘海区域）及 macOS Game Mode。
 - **原生输入**：物理手柄（GameController）、键盘，以及捕获后的相对鼠标和触控板输入（含滚动）。
@@ -123,7 +123,7 @@ AppleDeck 四轮显卡分数为 10548、10481、10463、10478，极差 0.8%；�
 
 性能：**Neptune / D3DMetal > Neptune / Mullion > 仅 Venus**。
 
-| 后端 | 宿主侧 | 客体 Neptune 兼容工具 | Time Spy 显卡分数 |
+| 后端 | 宿主侧 | 客体架构 | Time Spy 显卡分数 |
 |---|---|---|---:|
 | Neptune / D3DMetal（默认） | 用户提供的 x86-64 `D3DMetal.framework` | 仅 x86-64 | ≈10480 |
 | Neptune / Mullion | 随包提供的 arm64 Mullion 库 | x86-64 和 ARM64 | ≈5670 |
@@ -132,7 +132,7 @@ AppleDeck 四轮显卡分数为 10548、10481、10463、10478，极差 0.8%；�
 Mullion 数据来自单轮测试，呈现尺寸为 2560×1600，仍有已知未实现的路径；Mullion
 仍在持续优化。
 
-后端在下次启动虚拟机时生效。旧配置中的“自动”或缺失的后端字段按 D3DMetal 载入。依赖缺失时
+后端在下一次游戏启动时生效。旧配置中的“自动”或缺失的后端字段按 D3DMetal 载入。依赖缺失时
 会报告错误，不会自动回退到 Venus。
 
 使用 Mullion 或 D3DMetal 时，随包的 `org.appledeck.render-context` LaunchAgent 在虚拟机和
@@ -141,18 +141,11 @@ Mullion 数据来自单轮测试，呈现尺寸为 2560×1600，仍有已知未�
 
 ### 兼容层
 
-“设置 → 兼容层”列出 Steam 官方 Proton、GE-Proton 发布版本，以及所选磁盘中已安装的版本。
-下载在 Mac 上进行。官方 Proton 通过 Valve SteamCMD 获取，可能需要完成 Steam 账号验证。
-改动在虚拟机关机时写入磁盘。
+游戏始终使用 Steam 为该游戏选择的兼容工具（官方 Proton、GE-Proton 或第三方工具），AppleDeck
+不再生成或注册自有兼容工具。选择 Neptune 后端时，仅把随包的 D3D payload 以只读方式绑定进该次
+游戏的容器命名空间；Venus 与不兼容工具按原样直通。旧版本生成的 AppleDeck 自有兼容工具会在
+Steam 启动前自动迁回其原始基底工具。
 
-- 为一个或多个已安装基底打开 Neptune 开关，即生成 `AppleDeck Neptune · <基底版本>`；然后在
-  Steam 游戏的“属性 → 兼容性”中选择它。x86-64 Proton 11.0 的 Neptune 开关默认开启。
-- 每套生成的工具都是基底的完整私有副本，保留 Proton 自身的初始化、运行库和游戏兼容性
-  逻辑。基底更新在下次启动虚拟机前的离线同步中应用。
-- ARM64 版本需要 Mullion 后端。切换到 D3DMetal 时，相关游戏需改选 x86-64 版本。
-- 多 ring 选项转换为 `NPT_PERF=multi_ring`，默认关闭。
-- 旧格式的工具在下次离线同步时重新生成。游戏 prefix 和存档会保留，但旧工具的手工 DLL
-  覆盖记录不会迁移。
 
 ### 反作弊（EAC）
 
@@ -422,7 +415,7 @@ printf 'shutdown\n'                     > "$RUN_DIR/control.fifo"
 ## 已知限制
 
 - 没有磁盘快照或回滚。虚拟机使用镜像期间，请勿让其他程序写入。
-- D3DMetal 后端仅支持 x86-64 Neptune 兼容工具，ARM64 需要 Mullion。
+- D3DMetal 后端仅支持 x86-64 兼容工具，ARM64 工具需要 Mullion 后端。
 - 性能叠层暂不支持原生 Wayland 游戏。
 - 手柄不支持震动、陀螺仪、灯光或多玩家；不支持宿主输入法文本输入。
 - HTTP(S) 代理无法转发游戏 UDP 流量。

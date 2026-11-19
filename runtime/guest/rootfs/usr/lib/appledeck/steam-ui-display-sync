@@ -6,18 +6,13 @@ already resizes Xwayland server 0 when its DRM output changes. Enabling Steam's
 native-external-resolution setting lets that size survive Steam's own display
 policy. Game resolution overrides and UI scale preferences are independent.
 """
-import importlib.machinery
-import importlib.util
 from pathlib import Path
 import sys
 
 
 sys.dont_write_bytecode = True
-_loader = importlib.machinery.SourceFileLoader(
-    "steam_compat_default", str(Path(__file__).with_name("steam-compat-default")))
-_spec = importlib.util.spec_from_loader(_loader.name, _loader)
-vdf = importlib.util.module_from_spec(_spec)
-_loader.exec_module(vdf)
+sys.path.insert(0, str(Path(__file__).parent))
+import appledeck_vdf as vdf
 
 SETTING = ("InstallConfigStore", "Gamescope", "EnableSteamNativeExternalResolution")
 EMPTY = '"InstallConfigStore"\n{\n}\n'

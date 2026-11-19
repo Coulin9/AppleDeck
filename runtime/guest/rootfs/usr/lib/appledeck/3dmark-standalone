@@ -19,12 +19,13 @@ import zipfile
 
 sys.dont_write_bytecode = True
 from game_patches import ensure_compiler, three_dmark_arguments, three_dmark_env
-import steam_compatibility as tools
 
 
 METRICS_KEY = r"HKCU\Control Panel\Desktop\WindowMetrics"
 METRIC_DEFAULTS = {"CaptionHeight": 25, "SmCaptionHeight": 17, "MenuHeight": 18}
-NEPTUNE = Path("/usr/lib/appledeck")
+NEPTUNE = Path("/usr/lib/appledeck/neptune")
+MODE_FILE = Path("/run/appledeck/graphics-backend")
+MODE_TAG = {"neptune": "d3dmetal", "mullion": "mullion"}
 BROWSER_ID = "org.chromium.Chromium"
 
 
@@ -85,6 +86,28 @@ def copy_if_changed(source, target):
             temporary.unlink(missing_ok=True)
 
 
+def proton_root(steam):
+    """The official x86-64 Proton 11.0 depot, located by its appmanifest."""
+    manifest = steam / "steamapps/appmanifest_4628710.acf"
+    if manifest.is_file():
+        for line in manifest.read_text(errors="replace").splitlines():
+            if '"installdir"' in line:
+                tool = steam / "steamapps/common" / line.split('"')[-2]
+                if ((tool / "proton").is_file()
+                        and (tool / "files/bin/wine").is_file()
+                        and (tool / "files/lib/wine/x86_64-windows").is_dir()):
+                    return tool
+    raise ValueError(
+        "Install official Proton 11.0 (app 4628710) in the default Steam library first.")
+
+
+def live_backend():
+    try:
+        return MODE_TAG.get(MODE_FILE.read_text().strip())
+    except OSError:
+        return None
+
+
 def wine_command(root):
     steam = Path(os.environ.get("APPLEDECK_STEAM_ROOT") or Path.home() / ".local/share/Steam")
     common = steam / "steamapps/common"
@@ -92,20 +115,26 @@ def wine_command(root):
     runtime = common / "SteamLinuxRuntime_4/_v2-entry-point"
     if not fex.is_file() or not runtime.is_file():
         raise ValueError("Install Steam Linux Runtime 4 and FEX-Emu in the default Steam library first.")
-    tool = tools.runtime_root(steam, tools.DEFAULT_BASE)
-    unixlib = tool / "files/lib/wine/x86_64-unix/nptunix.so"
-    payload_lib = NEPTUNE / "neptune/x86_64-unix/nptunix.so"
-    if not unixlib.is_file() or unixlib.read_bytes() != payload_lib.read_bytes():
-        raise ValueError("Enable Neptune for x86-64 Proton 11.0 in AppleDeck settings before starting the VM.")
-    proton = tool / "files"
+    backend = live_backend()
+    if backend is None:
+        raise ValueError("Select a Neptune graphics backend in AppleDeck before starting 3DMark.")
+    bridge = NEPTUNE / "bridge/x86_64"
+    if not (NEPTUNE / "x86_64-unix/nptunix.so").is_file() or not (bridge / "nptunix.dll").is_file():
+        raise ValueError("The Neptune payload is not installed on this system.")
+    proton = proton_root(steam) / "files"
     env = dict(os.environ)
     env.update(
         WINEPREFIX=str(root / "pfx"), STEAM_COMPAT_DATA_PATH=str(root / "compat"),
-        WINEDEBUG="-all", WINEDLLPATH=str(proton / "lib/wine"),
+        WINEDEBUG="-all",
+        WINEDLLPATH="/run/host" + str(bridge) + ":" + str(proton / "lib/wine"),
         LD_LIBRARY_PATH=f"{proton}/lib/x86_64-linux-gnu:{proton}/lib",
         WINEDLLOVERRIDES="d3d12,dxgi,d3d11=n;nptunix=b", PROTON_USE_ARM64="0",
+        APPLEDECK_NEPTUNE_BACKEND=backend,
         FEX_NEEDSSECCOMP="1",
     )
+    fex_cfg = env.get("STEAM_COMPAT_FEX_CONFIG", "")
+    if "ThunksDB_Vulkan" not in fex_cfg:
+        env["STEAM_COMPAT_FEX_CONFIG"] = fex_cfg + ("," if fex_cfg else "") + "ThunksDB_Vulkan:1"
     env = three_dmark_env(env)
     for name in ("SteamAppId", "SteamGameId", "STEAM_COMPAT_APP_ID"):
         env.pop(name, None)
@@ -174,7 +203,7 @@ def open_desktop(root, game, wine, env, browser):
     if not running(game):
         repair_window_metrics(wine, env)
         system32 = root / "pfx/drive_c/windows/system32"
-        payload = NEPTUNE / "neptune/x86_64-windows"
+        payload = NEPTUNE / "x86_64-windows"
         for name in ("d3d11.dll", "d3d12.dll", "dxgi.dll", "nptunix.dll"):
             copy_if_changed(payload / name, system32 / name)
         with (root / "launch.log").open("wb") as log:
@@ -234,8 +263,8 @@ def main():
     args = parser.parse_args()
     if not os.environ.get("DISPLAY") or os.environ.get("XDG_CURRENT_DESKTOP") != "KDE":
         raise ValueError("Open this launcher in SteamOS Desktop Mode.")
-    if "appledeck.gfx=neptune" not in Path("/proc/cmdline").read_text().split():
-        raise ValueError("Select the Neptune graphics backend before launching 3DMark.")
+    if live_backend() is None:
+        raise ValueError("Select a Neptune graphics backend in AppleDeck before launching 3DMark.")
     os.umask(0o077)
     root = Path.home() / "3dmark-standalone"
     game = root / "pfx/drive_c/Program Files/UL/3DMark"

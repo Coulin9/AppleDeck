@@ -474,16 +474,6 @@ provision() {
     prov_say done
 }
 
-COMPATIBILITY_MODE=$(getarg appledeck.compatibility)
-if [ -n "$COMPATIBILITY_MODE" ]; then
-    fx_find_port || prov_fail "cannot report disk operation"
-    _ad_layer=/tmp/compatibility-layer
-    mkdir -p "$_ad_layer"
-    mount -t erofs -o ro,nosuid,nodev,noexec /dev/vdb "$_ad_layer" || prov_fail "cannot read the AppleDeck layer"
-    . "$_ad_layer/usr/lib/appledeck/compatibility-disk"
-    compatibility_disk "$COMPATIBILITY_MODE"
-fi
-
 if [ "$(getarg appledeck.recovery)" = 1 ]; then
     provision
     # libkrun exits the helper on poweroff. Wait until the host has received

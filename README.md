@@ -49,8 +49,9 @@ AppleDeck was inspired by [steamac](https://github.com/fxgl/steamac).
   and doorbells instead of round trips. A Venus-only (Vulkan) mode is also available.
 - **Easy Anti-Cheat support.** An EAC-patched FEX is used by default, so some EAC games,
   such as Elden Ring Nightreign, start with anti-cheat enabled.
-- **Managed compatibility tools.** Install Steam's official Proton and GE-Proton builds
-  from the Mac, and generate matching `AppleDeck Neptune · <version>` tools for Steam.
+- **Live graphics backends.** Switch between Venus (Vulkan), Neptune / D3DMetal and
+  Neptune / Mullion at any time; the selection applies to the next game launch and
+  keeps the Steam-selected compatibility tool unchanged.
 - **Native display path.** Guest scanouts are imported as Metal textures with no CPU pixel
   copies. Supports custom resolutions/refresh rates up to 8K, native full screen
   (including the notch area), and macOS Game Mode.
@@ -138,11 +139,11 @@ start.
   work. Before the VM starts, the launcher's screen is used; afterwards, the VM window's
   screen. Moving the window to a less capable screen lowers the mode automatically.
 
-### Graphics backends
+### Graphics performance
 
 Performance: **Neptune / D3DMetal > Neptune / Mullion > Venus only**.
 
-| Backend | Host side | Guest Neptune tools | Time Spy graphics |
+| Backend | Host side | Guest architectures | Time Spy graphics |
 |---|---|---|---:|
 | Neptune / D3DMetal (default) | User-supplied x86-64 `D3DMetal.framework` | x86-64 only | ≈10480 |
 | Neptune / Mullion | Bundled arm64 Mullion library | x86-64 and ARM64 | ≈5670 |
@@ -151,7 +152,7 @@ Performance: **Neptune / D3DMetal > Neptune / Mullion > Venus only**.
 The Mullion figure comes from a single run at a 2560×1600 presentation size,
 with known unimplemented paths. Mullion is still being optimised.
 
-The backend takes effect on the next VM start. Older configurations with *Automatic* or
+The backend takes effect on the next game launch. Older configurations with *Automatic* or
 no backend load as D3DMetal. A missing dependency is reported as an error, and AppleDeck
 does not silently fall back to Venus.
 
@@ -160,24 +161,21 @@ LaunchAgent exchanges XPC endpoints between the VM and the render workers. It ca
 graphics data and never starts the VM at login. If macOS asks, allow AppleDeck under
 **System Settings → General → Login Items & Extensions** and restart the VM.
 
-### Compatibility tools
+### Graphics backends
 
-**Settings → Compatibility Tools** lists Steam's official Proton releases, GE-Proton releases
-and the versions installed on the selected disk. Downloads happen on the Mac. Official
-Proton is fetched with Valve's SteamCMD, which may require Steam account verification.
-Changes are written to the disk while the VM is shut down.
+The **Graphics Backend** picker is live while the VM runs: Venus, Neptune / D3DMetal
+and Neptune / Mullion can be selected per game launch without restarting Steam or
+the VM. The framework path, aperture and multi-ring options remain boot-only.
 
-- Enable Neptune for one or more installed bases to generate
-  `AppleDeck Neptune · <base version>`, then select it under the game's **Properties →
-  Compatibility** in Steam. The Neptune switch for x86-64 Proton 11.0 is on by default.
-- Each generated tool is a private full copy of its base, so Proton's own setup, runtimes
-  and game fixes are preserved. Base updates are applied during the offline sync before
-  the next VM start.
+- The game keeps whatever compatibility tool Steam selected for it, including
+  third-party tools. Neptune binds only its own D3D payload files into the game's
+  container namespace and leaves the tool, prefix and game files untouched.
+- Venus launches and unsupported tools pass through byte-for-byte.
+- AppleDeck-owned compatibility tools from older releases are migrated back to
+  their original base tools automatically before Steam starts.
 - ARM64 tools require Mullion. When switching to D3DMetal, select the x86-64 tool for
   affected games.
 - The multi-ring option maps to `NPT_PERF=multi_ring` and is off by default.
-- Tools in an old layout are regenerated on the next offline sync. Game prefixes and saves
-  are kept, but manual DLL overrides from old tools are not migrated.
 
 ### Anti-cheat (EAC)
 

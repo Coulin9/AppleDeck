@@ -11,12 +11,9 @@
 "After the next boot, open /run/appledeck/shared in SteamOS." = "下次启动后，在 SteamOS 中打开 /run/appledeck/shared。";
 "AppleDeck runtime components are incomplete. Reinstall the app." = "AppleDeck 运行组件不完整，请重新安装应用。";
 "AppleDeck runtime components are missing. Reinstall the app." = "找不到 AppleDeck 运行组件，请重新安装应用。";
-"AppleDeck writes directly to the selected SteamOS disk. After the next boot, select the generated Neptune version under Compatibility in the game’s Steam properties." = "AppleDeck 直接写入所选 SteamOS 磁盘。下次启动后，在 Steam 游戏属性的「兼容性」中可选择生成的 Neptune 版本。";
 "AppleDeck — SteamOS · Click to Capture Mouse" = "AppleDeck — SteamOS · 点击画面捕获鼠标";
 "AppleDeck — SteamOS · Control+Option to Release Mouse" = "AppleDeck — SteamOS · Control+Option 释放鼠标";
 "Architecture" = "架构";
-"ARM64 Neptune compatibility tools require Mullion." = "ARM64 Neptune 兼容层需要 Mullion。";
-"ARM64 Neptune compatibility tools require the Mullion graphics backend." = "ARM64 版 Neptune 兼容层仅支持 Mullion 图形后端。";
 "Back" = "返回";
 "Backend" = "后端";
 "Battery" = "电池";
@@ -50,22 +47,17 @@
 "Choose System Disk or Install SteamOS" = "选择系统磁盘或全新安装";
 "Clear" = "清除";
 "Clear Disk Path" = "清除磁盘路径";
-"Compatibility Tools" = "兼容层";
-"Compatibility tools are read-only while SteamOS is running." = "运行中的 SteamOS 仅支持读取兼容层。";
 "Configuration" = "配置";
 "Configuration File" = "配置文件";
 "Configuration path unavailable" = "配置路径不可用";
 "Configuring boot entries" = "正在配置启动项";
 "Confirm the sign-in in the Steam mobile app, or wait for the Steam Guard prompt." = "请在 Steam 手机上确认登录，或等待 Steam Guard 提示。";
-"Connecting to Valve SteamCMD…" = "正在连接 Valve SteamCMD…";
 "Continue" = "继续";
 "Could not allocate the system disk. Check the destination and available space." = "无法分配系统磁盘，请检查目标位置和可用空间。";
 "Could not create a temporary image. Check disk space and folder permissions." = "无法创建临时镜像，请检查磁盘空间和文件夹权限。";
 "Could not create the system disk. Choose a writable folder and make sure the destination file does not already exist." = "无法创建系统磁盘。请选择可写文件夹，并确认目标文件不存在。";
 "Could not download the image from Valve. Try again or choose a local installation image." = "无法从 Valve 下载镜像，请重试或选择本地安装镜像。";
-"Could not extract Valve SteamCMD." = "无法解包 Valve SteamCMD。";
 "Could not load configuration (%@): %@" = "无法载入配置（%@）：%@";
-"Could not load the GE-Proton release catalog. %@" = "无法读取 GE-Proton 发布目录。%@";
 "Could not read the available display modes for the host display." = "无法读取宿主显示器的可用显示模式。";
 "Could not read the Mac’s network interfaces: %@" = "无法读取 Mac 的网络接口：%@";
 "Could not read the Mac’s physical network configuration." = "无法读取 Mac 的物理网络配置。";
@@ -74,8 +66,6 @@
 "Could not save the installation image. Check permissions for the download folder." = "无法保存安装镜像，请检查下载目录的访问权限。";
 "Could not save the installation log. Check permissions for the destination folder." = "无法保存安装日志，请检查目标文件夹的权限。";
 "Could not save the system disk. Check permissions and available space in the destination folder." = "无法保存系统磁盘，请检查目标文件夹的权限和可用空间。";
-"Could not send sign-in information to Valve SteamCMD." = "无法向 Valve SteamCMD 发送登录信息。";
-"Could not send the compatibility request. Try again later." = "无法发送兼容层请求，请稍后重试。";
 "Could not send the UU installation request. Try again later." = "无法发送 UU 安装请求，请稍后重试。";
 "Could not write the network configuration." = "无法写入网络配置。";
 "CPU by Core · Utilization / GHz / Temperature" = "CPU 逐核 · 占用 / GHz / 温度";
@@ -83,7 +73,6 @@
 "CPU: %lld" = "CPU：%lld";
 "Create a new disk and install SteamOS." = "创建新磁盘并安装 SteamOS。";
 "Creating system disk" = "正在创建系统磁盘";
-"D3DMetal supports x86-64 Neptune compatibility tools only. ARM64 requires Mullion." = "D3DMetal 仅支持 x86-64 Neptune 兼容层。ARM64 需要 Mullion。";
 "Data unavailable" = "数据暂不可用";
 "Disk" = "磁盘";
 "Display width and height must be between 1 and %lld pixels." = "显示器宽度和高度必须在 1–%lld 像素之间。";
@@ -121,7 +110,6 @@
 "Game Frame Time" = "游戏帧时间";
 "Game frame times measure the interval between successful frame submissions. CPU, GPU, memory, and battery metrics cover the whole Mac. A dash (—) indicates unavailable data." = "游戏帧时间来自成功提交画面的间隔。CPU、GPU、内存和电池为整台 Mac 的状态。数据不可用时显示 —。";
 "Game Performance" = "游戏性能";
-"GE-Proton download verification failed." = "GE-Proton 下载校验失败。";
 "General" = "通用";
 "GPU Clock" = "GPU 频率";
 "GPU Unified Memory Usage" = "GPU 占用统一内存";
@@ -161,7 +149,6 @@
 "Memory Pressure" = "内存压力";
 "Memory: %lld GiB" = "内存：%lld GiB";
 "Neptune aperture: %lld MiB" = "Neptune aperture：%lld MiB";
-"Neptune generated" = "已生成 Neptune";
 "Network" = "网络";
 "Neural Engine" = "神经网络引擎";
 "New System Disk" = "新系统磁盘";
@@ -175,7 +162,6 @@
 "Normal" = "正常";
 "Not installed" = "未安装";
 "Off" = "关闭";
-"Official Steam Releases" = "Steam 官方";
 "On Battery" = "使用电池";
 "Open Settings" = "打开设置";
 "Overlay Level" = "叠层显示等级";
@@ -183,7 +169,6 @@
 "Page %lld" = "第 %lld 页";
 "Plugged In" = "已接电源";
 "Preparing the fallback system" = "正在准备备用系统";
-"Preparing Valve SteamCMD…" = "正在准备 Valve SteamCMD…";
 "Previous Page" = "上一页";
 "Proxy Address" = "代理地址";
 "Quit and reopen AppleDeck to apply a language change." = "退出并重新打开 AppleDeck 后，语言设置将生效。";
@@ -208,7 +193,6 @@
 "Runtime Vulkan driver unavailable: %@" = "运行时 Vulkan 驱动不可用：%@";
 "Sample Window" = "统计窗口";
 "Scan the code in the UU mobile app to pair this device. Select your game and enable acceleration before launching it." = "用手机 UU App 扫码绑定，选择游戏并开启加速后再启动游戏。";
-"Search Compatibility Tools" = "搜索兼容层";
 "Select D3DMetal.framework" = "选择 D3DMetal.framework";
 "Set Up System Disk" = "设置系统磁盘";
 "Shared Folder" = "共享文件夹";
@@ -226,7 +210,6 @@
 "Steam Account Name" = "Steam 登录账号";
 "Steam Guard Code" = "Steam Guard 验证码";
 "Steam Password" = "Steam 密码";
-"Steam requires account authorization. Your password and Steam Guard code are sent only to Valve SteamCMD running on this Mac." = "Steam 需要账号授权。密码与 Steam Guard 仅发送给 Mac 上运行的 Valve SteamCMD。";
 "SteamOS is installing" = "SteamOS 正在安装";
 "SteamOS is installing (%@)" = "SteamOS 正在安装 %@";
 "Stop Installation" = "停止安装";
@@ -236,7 +219,6 @@
 "Swap" = "交换空间";
 "System Power (Estimated)" = "整机功耗（估计）";
 "The AppleDeck guest components could not be found." = "找不到 AppleDeck 客体组件。";
-"The compatibility request is too long." = "兼容层请求过长。";
 "The D3DMetal framework path must be absolute." = "D3DMetal 框架必须使用绝对路径。";
 "The disk image must be an absolute path to a readable regular file." = "磁盘镜像必须使用可读取的普通文件的绝对路径。";
 "The disk image’s GPT partition table is incomplete or damaged. Select another image or download it again." = "磁盘镜像的 GPT 分区表不完整或已损坏，请重新选择或下载镜像。";
@@ -244,7 +226,6 @@
 "The download server returned an unsupported format. Try again later." = "下载源返回了不支持的数据格式，请稍后重试。";
 "The download was interrupted. Check your connection and try again." = "下载中断，请检查网络后重试。";
 "The extracted installation image has an unexpected size. Choose an official Valve recovery image." = "安装镜像解压后的大小异常，请选择 Valve 官方恢复镜像。";
-"The GE-Proton checksum file is invalid." = "GE-Proton 校验文件无效。";
 "The image download is incomplete. Resume the download." = "镜像尚未下载完整，请继续下载。";
 "The image’s boot partition is incomplete (%@). Choose a complete image." = "镜像的启动分区不完整（%@），请选择完整镜像。";
 "The image’s system partition is incomplete (%@). Choose a complete image." = "镜像的系统分区不完整（%@），请选择完整镜像。";
@@ -259,16 +240,13 @@
 "The selected system disk is not writable." = "所选系统磁盘不可写。";
 "The shared folder must be an accessible local directory: %@" = "共享文件夹必须是可访问的本机目录：%@";
 "The Steam interface follows the display resolution. The window scales proportionally and stays within the limits of the current display." = "Steam 界面随显示器分辨率同步。窗口按比例适配，换屏时遵守所在屏幕上限。";
-"The SteamOS compatibility service did not respond. Try again later." = "SteamOS 兼容层服务未响应，请稍后重试。";
 "The SteamOS connection is closed." = "SteamOS 连接已关闭。";
-"The SteamOS disk did not return a list of compatibility tools." = "SteamOS 磁盘没有返回兼容层清单。";
 "The SteamOS disk is in use. Shut down the virtual machine first." = "SteamOS 磁盘正在使用中，请先关闭虚拟机。";
 "The SteamOS disk operation did not complete%@. Try again." = "SteamOS 磁盘操作未完成%@，请重试。";
 "The system disk was not fully formatted (%@). Reinstall SteamOS." = "系统磁盘尚未完成格式化（%@），请重新安装。";
 "The UU installation service is not ready. Wait for SteamOS to start." = "UU 安装服务尚未就绪，请等待 SteamOS 启动。";
 "The Valve download is temporarily unavailable. Try again or choose a local installation image." = "Valve 下载源暂时不可用，请重试或选择本地安装镜像。";
 "The Valve image changed during the download. Start the download again." = "Valve 镜像在下载期间发生变化，请重新开始下载。";
-"The Valve SteamCMD executable could not be found." = "找不到 Valve SteamCMD 可执行文件。";
 "The virtual machine is shutting down." = "虚拟机正在关闭。";
 "The virtual machine is still running" = "虚拟机仍在运行";
 "The virtual machine process exited (status %d)." = "虚拟机进程退出（状态 %d）。";
@@ -278,7 +256,6 @@
 "This folder contains too many disks with the same name. Choose another location." = "此文件夹中的同名磁盘过多，请选择其他位置。";
 "This is a SteamOS installation image. Choose Fresh Install." = "这是 SteamOS 安装镜像，请选择“全新安装”。";
 "This location does not support sparse disk images. Choose a folder on an APFS volume." = "此位置不支持稀疏磁盘，请选择 APFS 卷上的文件夹。";
-"This release is missing the GE-Proton archive." = "此版本缺少 GE-Proton 发布文件。";
 "Top Left" = "左上角";
 "Top Right" = "右上角";
 "Unavailable" = "不可用";
@@ -287,12 +264,7 @@
 "Use an existing AppleDeck system disk." = "使用已部署的 AppleDeck 系统磁盘。";
 "UU Device Pairing QR Code" = "UU 设备绑定二维码";
 "UU Game Booster" = "UU 加速器";
-"Valve has not granted this account access to download this Proton version." = "Valve 未向此账号授予该 Proton 版本的下载许可。";
 "Valve is downloading %@…" = "Valve 正在下载 %@…";
-"Valve SteamCMD bootstrap verification failed." = "Valve SteamCMD 引导程序校验失败。";
-"Valve SteamCMD did not finish the download. Check your network connection and Steam sign-in." = "Valve SteamCMD 未完成下载，请检查网络和 Steam 登录状态。";
-"Valve SteamCMD did not produce a complete Proton installation." = "Valve SteamCMD 没有生成完整的 Proton 安装文件。";
-"Valve SteamCMD rejected the sign-in or download. Check Steam Guard and account permissions." = "Valve SteamCMD 拒绝了登录或下载，请检查 Steam Guard 和账号权限。";
 "Venus Only" = "仅 Venus";
 "Verifying installation image" = "正在校验安装镜像";
 "Verifying installation image…" = "正在校验安装镜像…";
@@ -303,7 +275,7 @@
 "Waiting for full frame data" = "等待完整逐帧数据";
 "Waiting for Valve to verify the sign-in…" = "等待 Valve 验证登录…";
 "Writing to the SteamOS disk…" = "正在写入 SteamOS 磁盘…";
-"You can download and inspect versions while the virtual machine is running. Shut it down to install tools or change Neptune settings." = "虚拟机运行时可以下载并查看版本。关闭虚拟机后可安装或更改 Neptune。";
-"You can download tools to the Mac first and install them after choosing a SteamOS disk." = "可以先下载到 Mac。选择 SteamOS 磁盘后即可安装。";
 "— · at least 100 frames required" = "— · 需至少 100 帧";
-"Neptune runtime · %@" = "Neptune 运行时 · %@";
+"Backend changes apply to the next game launch; the framework, aperture, and multi-ring settings still only apply at boot." = "后端更改在下一次游戏启动时生效；框架、地址窗口和多环设置仍仅在虚拟机启动时应用。";
+"This graphics backend is not available." = "此图形后端不可用。";
+"The guest did not confirm the graphics backend change." = "客体未确认图形后端更改。";

@@ -6,7 +6,7 @@ import shlex
 import sys
 
 from game_patches import PATCHES
-import steam_compatibility as tools
+import appledeck_vdf
 
 
 LAUNCHER = "/usr/lib/appledeck/appledeck-game-launch"
@@ -40,7 +40,7 @@ def load_settings(state):
 
 
 def save_settings(state, data):
-    tools.compat.atomic_write(settings_path(state), json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    appledeck_vdf.atomic_write(settings_path(state), json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def launch_options(appid, previous):
@@ -75,7 +75,7 @@ def synchronize(steam, state):
             continue
         try:
             original = config.read_text()
-            values, blocks, _ = tools.compat.vdf_entries(original)
+            values, blocks, _ = appledeck_vdf.vdf_entries(original)
             if (APP_PATH[0].lower(),) not in blocks:
                 raise ValueError("missing UserLocalConfigStore block")
         except (OSError, ValueError) as error:
@@ -100,12 +100,12 @@ def synchronize(steam, state):
                 print(f"appledeck-game-patches: appid={appid} account={account}: {error}", file=sys.stderr)
                 continue
             records[appid] = {"previous": previous, "applied": applied, "pending": True}
-            text = tools.compat.vdf_set(text, path, applied)
+            text = appledeck_vdf.vdf_set(text, path, applied)
         # Persist ownership before publishing options, so a stopped write can
         # resume from either the previous or the applied value.
         save_settings(state, data)
         if text != original:
-            tools.compat.atomic_write(config, text)
+            appledeck_vdf.atomic_write(config, text)
         for record in records.values():
             record.pop("pending", None)
         if not records:

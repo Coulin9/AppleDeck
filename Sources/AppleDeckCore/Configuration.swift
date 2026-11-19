@@ -77,6 +77,8 @@ public enum GraphicsBackend: String, Codable, Sendable, CaseIterable {
     case neptune
     case mullion
 
+    public var title: String { rawValue }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let value = try container.decode(String.self)
@@ -302,6 +304,14 @@ public struct ConfigurationStore: Sendable {
         var configuration = try decode()
         configuration.gameHUDLevel = level
         configuration.gameHUDPosition = position
+        try save(configuration, for: host)
+    }
+
+    /// The graphics backend preference can be saved while a VM is running.
+    /// Read the stored configuration so unrelated in-memory settings stay untouched.
+    public func setGraphicsBackend(_ backend: GraphicsBackend, for host: HostCapabilities) throws {
+        var configuration = try decode()
+        configuration.graphicsBackend = backend
         try save(configuration, for: host)
     }
 

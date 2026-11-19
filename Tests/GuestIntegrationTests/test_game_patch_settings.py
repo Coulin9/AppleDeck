@@ -11,6 +11,7 @@ spec = importlib.util.spec_from_file_location("game_patch_settings", SCRIPTS / "
 settings = importlib.util.module_from_spec(spec)
 with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
     spec.loader.exec_module(settings)
+    import appledeck_vdf as vdf
 
 
 class GamePatchSettingsTests(unittest.TestCase):
@@ -25,13 +26,13 @@ class GamePatchSettingsTests(unittest.TestCase):
         self.config.write_text('"UserLocalConfigStore" { "Software" { "Valve" { "Steam" { "apps" {} } } } }')
 
     def options(self, appid="1091500"):
-        values, _, _ = settings.tools.compat.vdf_entries(self.config.read_text())
+        values, _, _ = vdf.vdf_entries(self.config.read_text())
         path = tuple(part.lower() for part in (*settings.APP_PATH, appid, "LaunchOptions"))
         return values.get(path, (None,))[0]
 
     def set_options(self, value):
         path = (*settings.APP_PATH, "1091500", "LaunchOptions")
-        self.config.write_text(settings.tools.compat.vdf_set(self.config.read_text(), path, value))
+        self.config.write_text(vdf.vdf_set(self.config.read_text(), path, value))
 
     def test_all_supported_patches_are_defaults(self):
         settings.synchronize(self.steam, self.state)
@@ -114,7 +115,7 @@ class GamePatchSettingsTests(unittest.TestCase):
 
     def test_unrelated_game_options_are_preserved(self):
         path = (*settings.APP_PATH, "42", "LaunchOptions")
-        self.config.write_text(settings.tools.compat.vdf_set(self.config.read_text(), path, "--user-option"))
+        self.config.write_text(vdf.vdf_set(self.config.read_text(), path, "--user-option"))
         settings.synchronize(self.steam, self.state)
         self.assertEqual(self.options("42"), "--user-option")
 
