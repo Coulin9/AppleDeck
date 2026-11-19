@@ -1,0 +1,13 @@
+[Unit]
+Description=AppleDeck progress reporter
+PartOf=gamescope-session.target plasma-session.target
+After=gamescope-session.service
+
+[Service]
+Type=simple
+Slice=session.slice
+ExecStart=/usr/bin/appledeck-agent
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=3
+Nice=5

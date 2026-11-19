@@ -1,0 +1,12 @@
+[Unit]
+Description=AppleDeck Steam compatibility tools
+ConditionPathExists=/dev/virtio-ports/fx.compatibility
+RequiresMountsFor=/home
+
+[Service]
+Type=simple
+User=steamos
+ExecStart=/usr/lib/appledeck/steam-compatibility-control
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes

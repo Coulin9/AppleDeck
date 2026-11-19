@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+runtime=/usr/lib/appledeck/uu-runtime
+state=/home/uu/uu
+# /tmp is public. Never follow a directory supplied by another guest user.
+for directory in /home/uu "$state" "$state/appledeck-payload" "$state/data" "$state/config" "$state/compat" /tmp/uu /run/appledeck-uu-xtables; do
+    if [[ -L "$directory" ]]; then
+        echo "Unsafe UU directory: $directory" >&2
+        exit 1
+    fi
+    if [[ -e "$directory" ]]; then
+        mode=$(stat -c %a "$directory")
+        if [[ ! -d "$directory" || $(stat -c %u "$directory") != 0 ]] || (( (8#$mode & 0022) != 0 )); then
+            echo "Unsafe UU directory permissions: $directory" >&2
+            exit 1
+        fi
+    else
+        mkdir -m700 "$directory"
+    fi
+done
+tar -C /run/appledeck-uu-xtables -xf "$runtime/xtables.tar"
+# Retain the plugin's device identity and state; replace only its program files.
+for name in uuplugin xuplugin-guardian; do
+    [[ -f "$state/appledeck-payload/$name" && ! -L "$state/appledeck-payload/$name" ]] || exit 1
+    [[ ! -L "/tmp/uu/$name" ]] || exit 1
+    install -m755 "$state/appledeck-payload/$name" "/tmp/uu/$name"
+done
+[[ ! -L /tmp/uu/uu.conf ]] || exit 1
+if [[ ! -s /tmp/uu/uu.conf ]]; then
+    install -m600 "$state/appledeck-payload/uu.conf" /tmp/uu/uu.conf
+fi
+cd /tmp/uu
+exec "$runtime/bin/FEX" /tmp/uu/uuplugin /tmp/uu/uu.conf

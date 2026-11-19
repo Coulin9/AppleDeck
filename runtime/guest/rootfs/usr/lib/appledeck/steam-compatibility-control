@@ -1,0 +1,30 @@
+#!/usr/bin/python3
+"""Read-only compatibility inventory for a running SteamOS guest."""
+
+import json
+import os
+import sys
+
+sys.dont_write_bytecode = True
+import steam_compatibility as tools
+
+
+if __name__ == "__main__":
+    descriptor = os.open("/dev/virtio-ports/fx.compatibility", os.O_RDWR | os.O_CLOEXEC)
+    with os.fdopen(descriptor, "rb") as source:
+        for line in source:
+            request_id = None
+            try:
+                if len(line) > 512:
+                    raise ValueError("兼容层请求过长。")
+                data = json.loads(line)
+                request_id = data["id"]
+                if data["action"] != "list":
+                    raise ValueError("运行中的 SteamOS 仅支持读取兼容层。")
+                response = {"status": tools.inventory(tools.steam_root(), tools.state_dir())}
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                response = {"error": str(error)}
+            response["id"] = request_id
+            record = memoryview((json.dumps(response, ensure_ascii=False) + "\n").encode())
+            while record:
+                record = record[os.write(source.fileno(), record):]

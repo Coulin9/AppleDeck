@@ -1,0 +1,176 @@
+#!/usr/bin/python3
+"""Copy AppleDeck's downloaded packages into an offline Steam library."""
+
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import tarfile
+import tempfile
+
+sys.dont_write_bytecode = True
+import steam_compatibility as tools
+import game_patch_settings as patches
+
+_loader = importlib.machinery.SourceFileLoader(
+    "steam_neptune_path", str(Path(__file__).with_name("steam-neptune-path")))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+neptune = importlib.util.module_from_spec(_spec)
+_loader.exec_module(neptune)
+PAYLOAD = Path(__file__).with_name("neptune")
+
+
+def install_ge(steam, exchange, key):
+    archive = exchange / "proton.tar.gz"
+    checksum = (exchange / "checksum").read_text().strip().lower()
+    with archive.open("rb") as stream:
+        if not re.fullmatch(r"[0-9a-f]{128}", checksum) or hashlib.file_digest(stream, "sha512").hexdigest() != checksum:
+            raise ValueError("GE-Proton 下载校验失败。")
+    parent = steam / "compatibilitytools.d"
+    parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".appledeck-ge-", dir=parent) as temporary:
+        stage = Path(temporary)
+        with tarfile.open(archive, "r:gz") as source:
+            source.extractall(stage, filter="data")
+        directories = list(stage.iterdir())
+        candidate = directories[0] if len(directories) == 1 else None
+        installed = tools.ge_tool(candidate) if candidate and candidate.is_dir() and not candidate.is_symlink() else None
+        if not installed or installed.id != key:
+            raise ValueError("GE-Proton 发布包中找不到对应的 Steam 兼容工具。")
+        destination = parent / candidate.name
+        if destination.exists() or destination.is_symlink():
+            raise ValueError("Steam 兼容工具目录已存在，请刷新列表。")
+        candidate.rename(destination)
+
+
+def install_steam(steam, exchange, key):
+    appid = key.removeprefix("steam:")
+    source = exchange / "native/steamapps"
+    filename = f"appmanifest_{appid}.acf"
+    manifest = (source / filename).read_text()
+    fields, _, _ = tools.compat.vdf_entries(manifest)
+    values = {path[-1]: entry[0] for path, entry in fields.items()
+              if len(path) == 2 and path[0] == "appstate"}
+    directory = values.get("installdir", "")
+    if (values.get("appid") != appid or not int(values.get("stateflags", "0")) & 4
+            or not directory or directory in (".", "..") or Path(directory).name != directory):
+        raise ValueError("Steam 安装元数据不完整。")
+    files = source / "common" / directory
+    if not (files / "proton").is_file():
+        raise ValueError("Steam Proton 安装文件不完整。")
+
+    installed = tools.steam_tools(steam, tools.steam_catalog(steam)).get(key)
+    if installed and installed.root:
+        return
+    apps = steam / "steamapps"
+    destination = apps / "common" / directory
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    target_manifest = apps / filename
+    pending = apps / f".appledeck-pending-{appid}"
+    if destination.exists() or destination.is_symlink():
+        # An interrupted publish can finish by applying its original manifest.
+        if not pending.is_file() or pending.read_text() != manifest or not (destination / "proton").is_file():
+            raise ValueError("Steam 安装目录已存在，请在 Steam 中检查此兼容层。")
+    else:
+        with tempfile.TemporaryDirectory(prefix=".appledeck-proton-", dir=apps) as temporary:
+            stage = Path(temporary) / directory
+            shutil.copytree(files, stage, symlinks=True)
+            tools.compat.atomic_write(pending, manifest)
+            stage.rename(destination)
+    pending.replace(target_manifest)
+
+
+def discard_obsolete_tools(steam, state):
+    """Remove obsolete tool references before deleting their owned packages."""
+    enabled = tools.selections(state)
+    obsolete = {key: marker for key, marker in tools.owned_tools(steam).items()
+                if marker.get("schema") != 2 or key not in enabled}
+    config = steam / "config/config.vdf"
+    text = config.read_text() if config.is_file() else None
+    original = text
+    bases = tools.steam_tools(steam, tools.steam_catalog(steam))
+    bases.update(tools.installed_ge_tools(steam))
+    for key, marker in obsolete.items():
+        if text is None:
+            continue
+        identifiers = {tools.tool_id(key), tools.legacy_tool_id(key), marker.get("tool_id")}
+        for appid, entry in tools.compat.mappings(text).items():
+            if entry.get("name") not in identifiers:
+                continue
+            if marker.get("schema") == 2:
+                base_id = marker.get("base_id")
+                if not base_id and key in bases:
+                    base_id = bases[key].base_id
+                if not base_id and key == tools.DEFAULT_BASE:
+                    base_id = "proton_11"
+                if not base_id or not (Path(marker["base"]) / "proton").is_file():
+                    raise ValueError("原基底不可用，请先在 Steam 中更改该游戏的兼容工具。")
+                text = tools.compat.set_mapping(text, appid, dict(entry, name=base_id))
+            else:
+                text = tools.compat.set_mapping(text, appid, None)
+    if text != original:
+        tools.compat.atomic_write(config, text)
+    for key in obsolete:
+        neptune.remove_tool(steam, key)
+    # Old prefix restoration records are no longer used. Game prefixes and
+    # saves remain owned by Proton and are not part of this package cleanup.
+    (state / "ownership.json").unlink(missing_ok=True)
+    originals = state / "prefix-originals"
+    if originals.is_symlink():
+        originals.unlink()
+    elif originals.is_dir():
+        shutil.rmtree(originals)
+
+
+def request(steam, state, exchange, mode, data):
+    action = data["action"]
+    if action == "list":
+        return tools.inventory(steam, state)
+    if mode != "write":
+        raise ValueError("SteamOS 磁盘以只读方式打开。")
+    backend = data.get("graphicsBackend", "neptune")
+    if backend not in ("neptune", "mullion", "venus"):
+        raise ValueError("无效的图形后端。")
+    if action == "neptune":
+        tools.set_neptune(steam, state, data, backend)
+    elif action == "install":
+        key = data.get("tool")
+        if not isinstance(key, str) or not tools.BASE_KEY.fullmatch(key):
+            raise ValueError("无效的安装请求。")
+        if key.startswith("ge:"):
+            install_ge(steam, exchange, key)
+        else:
+            install_steam(steam, exchange, key)
+    elif action != "synchronize":
+        raise ValueError("无效的磁盘操作。")
+    if not steam.is_dir() and action == "synchronize":
+        return tools.inventory(steam, state)
+    discard_obsolete_tools(steam, state)
+    neptune.synchronize_tools(steam, state, PAYLOAD, backend)
+    if action == "synchronize":
+        patches.synchronize(steam, state)
+    return tools.inventory(steam, state)
+
+
+if __name__ == "__main__":
+    exchange = Path("/run/appledeck-compatibility")
+    data = json.loads((exchange / "request.json").read_text())
+    uid, gid = int(sys.argv[2]), int(sys.argv[3])
+    home = Path("/home/steamos")
+    if sys.argv[1] == "write" and data.get("action") == "install" and not home.exists():
+        home.mkdir(mode=0o700)
+        os.chown(home, uid, gid)
+    os.setgroups([])
+    os.setgid(gid)
+    os.setuid(uid)
+    try:
+        status = request(tools.steam_root(), tools.state_dir(), exchange, sys.argv[1], data)
+        reply = {"id": data["id"], "status": status}
+    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as error:
+        reply = {"id": data["id"], "error": str(error)}
+    (exchange / "reply.json").write_text(json.dumps(reply, ensure_ascii=False) + "\n")

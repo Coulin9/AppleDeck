@@ -1,0 +1,14 @@
+[Unit]
+Description=AppleDeck hardware telemetry
+ConditionPathExists=/dev/virtio-ports/fx.telemetry
+
+[Service]
+ExecStart=/usr/bin/appledeck-agent telemetry
+RuntimeDirectory=power-monitor/power appledeck-telemetry
+Restart=on-failure
+RestartSec=2
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateNetwork=yes

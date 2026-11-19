@@ -1,0 +1,297 @@
+#!/usr/bin/python3
+"""Build isolated Proton runtimes with Neptune graphics on an offline disk."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import stat
+import struct
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+import steam_compatibility as tools
+from steam_compatibility import compat, OWNER
+
+
+def payload_files(arch):
+    return {
+        f"{arch}-windows/d3d11.dll": f"files/lib/wine/dxvk/{arch}-windows/d3d11.dll",
+        f"{arch}-windows/dxgi.dll": f"files/lib/wine/dxvk/{arch}-windows/dxgi.dll",
+        f"{arch}-windows/d3d12.dll": f"files/lib/wine/vkd3d-proton/{arch}-windows/d3d12.dll",
+        f"{arch}-windows/nptunix.dll": f"files/lib/wine/{arch}-windows/nptunix.dll",
+        f"{arch}-unix/nptunix.so": f"files/lib/wine/{arch}-unix/nptunix.so",
+    }
+
+
+def log(message):
+    print(f"steam-neptune-path: pid={os.getpid()} {message}", file=sys.stderr, flush=True)
+
+
+def digest(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def private_vdf(source, base_id, tool_id, name, install_path):
+    """Change the registration identity and installation path only."""
+    if not source.is_file():
+        return ('"compatibilitytools"\n{\n"compat_tools"\n{\n' + compat.vdf_quote(tool_id)
+                + '\n{\n"install_path" ' + compat.vdf_quote(install_path)
+                + '\n"display_name" ' + compat.vdf_quote(name) + '\n'
+                '"from_oslist" "windows"\n"to_oslist" "linux"\n}\n}\n}\n')
+    text = source.read_text()
+    _, blocks, starts = compat.vdf_entries(text)
+    entries = [path for path in blocks if len(path) == 3 and path[:2] == tools.VDF_TOOLS]
+    selected = next((path for path in entries if path[-1] == base_id), None)
+    if selected is None:
+        if len(entries) != 1:
+            raise ValueError("无法识别基底的 Steam 兼容工具条目。")
+        selected = entries[0]
+    entry = text[starts[selected]:blocks[selected] + 1]
+    token = re.match(r'"(?:\\.|[^"\\])*"|[^\s{}"]+', entry)
+    entry = compat.vdf_quote(tool_id) + entry[token.end():]
+    out = '"compatibilitytools"\n{\n"compat_tools"\n{\n' + entry + '\n}\n}\n'
+    path = (*tools.VDF_TOOLS, tool_id)
+    out = compat.vdf_set(out, (*path, "install_path"), install_path)
+    return compat.vdf_set(out, (*path, "display_name"), name)
+
+
+def graphics_manifest(text):
+    """Keep the base command templates and dependencies, replacing its executable."""
+    values, _, _ = compat.vdf_entries(text)
+    commands = [path for path in values if len(path) == 2 and path[0] == "manifest"
+                and (path[1] == "commandline" or path[1].startswith("commandline_"))]
+    if not commands:
+        raise ValueError("基底缺少 Proton 启动命令。")
+    for path in commands:
+        command = values[path][0]
+        match = re.match(r'^(\s*)(?:"/proton"|/proton)(?=\s|$)', command)
+        if match is None:
+            raise ValueError("基底的启动命令格式尚不支持 Neptune。")
+        command = match[1] + "/neptune-launch" + command[match.end():]
+        text = compat.vdf_set(text, path, command)
+    return text
+
+
+def graphics_launcher(base, arch):
+    return (
+        '#!/bin/bash\nset -e\n'
+        'cmdline=$(cat "${APPLEDECK_CMDLINE:-/proc/cmdline}" 2>/dev/null || true)\n'
+        'if [[ ! $cmdline =~ (^|[[:space:]])appledeck\\.gfx=neptune($|[[:space:]]) ]]; then\n'
+        '  if ! cmp -s ' + shlex.quote(str(base / "toolmanifest.vdf")) + ' "$(dirname "$0")/appledeck-base-toolmanifest.vdf"; then\n'
+        '    echo "AppleDeck Neptune: the base runtime contract changed. Refresh compatibility tools before using this fallback." >&2\n'
+        '    exit 1\n'
+        '  fi\n'
+        '  exec ' + shlex.quote(str(base / "proton")) + ' "$@"\n'
+        'fi\n'
+        'if [[ ' + shlex.quote(arch) + ' == aarch64 ]]; then\n'
+        '  if [[ ! $cmdline =~ (^|[[:space:]])appledeck[.]neptune[.]backend=mullion($|[[:space:]]) ]]; then\n'
+        '    echo "AppleDeck Neptune: ARM64 Proton requires the Mullion backend." >&2\n'
+        '    exit 1\n'
+        '  fi\n'
+        '  export PROTON_USE_ARM64=1\n'
+        'else\n'
+        '  export PROTON_USE_ARM64=0\n'
+        'fi\n'
+        'if [[ $cmdline =~ (^|[[:space:]])appledeck\\.neptune\\.multi_ring=1($|[[:space:]]) ]]; then\n'
+        '  export NPT_PERF="${NPT_PERF:+$NPT_PERF,}multi_ring"\n'
+        'fi\n'
+        'export WINEDLLOVERRIDES="d3d12,dxgi,d3d11=n;nptunix=b${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"\n'
+        'exec "$(dirname "$0")/proton" "$@"\n'
+    )
+
+
+def source_entries(base):
+    """Track changes to every source input without rehashing an entire Proton each boot."""
+    for directory, dirs, files in os.walk(base, followlinks=False):
+        dirs[:] = sorted(name for name in dirs if name != "__pycache__")
+        for name in sorted([*dirs, *files]):
+            relative = (Path(directory) / name).relative_to(base)
+            if relative == Path("dist.lock") or name == "__pycache__":
+                continue
+            path = base / relative
+            info = path.lstat()
+            link = os.readlink(path) if path.is_symlink() else None
+            yield str(relative), stat.S_IMODE(info.st_mode), info.st_size, info.st_mtime_ns, link
+
+
+def source_fingerprint(base):
+    checksum = hashlib.sha256()
+    for entry in source_entries(base):
+        checksum.update(json.dumps(entry, ensure_ascii=False).encode() + b"\n")
+    return checksum.hexdigest()
+
+
+def copy_runtime(base, destination):
+    shutil.copytree(base, destination, symlinks=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "dist.lock"))
+    for relative, _, _, _, link in source_entries(base):
+        if link is None:
+            continue
+        original = Path(os.path.normpath(os.path.join(str((base / relative).parent), link)))
+        # Steam also exposes the same installation through ~/.steam symlinks.
+        # Keep internal dangling links, and resolve aliases that still point in.
+        if not original.is_relative_to(base):
+            original = original.resolve(strict=False)
+        if original.is_relative_to(base):
+            target = destination / original.relative_to(base)
+            copied = destination / relative
+            copied.unlink()
+            copied.symlink_to(os.path.relpath(target, copied.parent))
+
+
+def private_target(runtime, relative):
+    target = runtime / relative
+    ancestor = target.parent
+    while not ancestor.exists() and not ancestor.is_symlink():
+        ancestor = ancestor.parent
+    if not ancestor.resolve().is_relative_to(runtime.resolve()):
+        raise ValueError("Neptune 载荷目录指向基底之外。")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.unlink(missing_ok=True)
+    return target
+
+
+def validate_payload(payload, arch):
+    manifest = json.loads((payload / "payload.json").read_text())
+    files = payload_files(arch)
+    if manifest.get("schema") != 1 or not files.keys() <= manifest.get("files", {}).keys():
+        raise ValueError("invalid Neptune payload manifest")
+    hashes = {}
+    for relative in files:
+        hashes[relative] = digest(payload / relative)
+        if hashes[relative] != manifest["files"][relative]:
+            raise ValueError("Neptune payload checksum mismatch: " + relative)
+        if relative.endswith(".dll"):
+            with (payload / relative).open("rb") as source:
+                header = source.read(64)
+                if len(header) != 64 or header[:2] != b"MZ":
+                    raise ValueError("Invalid Neptune PE header: " + relative)
+                source.seek(struct.unpack_from("<I", header, 0x3c)[0])
+                pe = source.read(6)
+                # ARM64EC payloads expose the x64-compatible PE machine as well.
+                if pe[:4] != b"PE\0\0" or pe[4:] != b"\x64\x86":
+                    raise ValueError("Invalid Neptune PE architecture: " + relative)
+                if relative.endswith("/nptunix.dll"):
+                    source.seek(0)
+                    contents = source.read()
+                    if (contents[0x40:0x50] != b"Wine builtin DLL"
+                            or b"nptunix.dll\0" not in contents
+                            or b"nptunix_unpatched.dll\0" in contents):
+                        raise ValueError("Invalid Neptune Wine builtin: " + relative)
+    if tools.elf_machine(payload / f"{arch}-unix/nptunix.so") != tools.NEPTUNE_ARCHITECTURES[arch]:
+        raise ValueError(f"Neptune Unixlib must be {arch} ELF")
+    return hashes
+
+
+def prepare_tool(steam, payload, tool, hashes):
+    base = tool.root.resolve()
+    root = tools.tool_dir(steam, tool.id)
+    source = source_fingerprint(base)
+    inputs = {"source": source, "launcher": digest(Path(__file__)), "payload": hashes,
+              "base": str(base), "build": tool.build, "architecture": tool.architecture,
+              "base_id": tool.base_id, "name": tool.name}
+    identity = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()[:24]
+    relative = "runtimes/" + identity
+    marker = {"schema": 2, "base_key": tool.id, "base_id": tool.base_id,
+              "tool_id": tools.tool_id(tool.id), "display_name": "AppleDeck Neptune · " + tool.name,
+              "base": str(base), "architecture": tool.architecture, "build": tool.build,
+              "version": (base / "version").read_text().strip(), "runtime": relative, "inputs": inputs}
+    if root.is_symlink():
+        raise ValueError("refusing to replace unowned compatibility tool " + str(root))
+    previous = tools.owned_tools(steam).get(tool.id)
+    if root.exists() and (previous is None or previous.get("schema") != 2):
+        raise ValueError("请先删除旧的 Neptune 兼容层，再重新生成。")
+    if previous == marker:
+        tools.runtime_root(steam, tool.id)
+        log("private tool reuse path=" + str(root))
+        return marker
+    registration = private_vdf(base / "compatibilitytool.vdf", tool.base_id, marker["tool_id"],
+                               marker["display_name"], relative)
+    manifest = graphics_manifest((base / "toolmanifest.vdf").read_text())
+    root.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".neptune-", dir=root.parent))
+    runtime = temporary / "runtime"
+    published = root / relative
+    try:
+        copy_runtime(base, runtime)
+        for name, target in payload_files(tool.architecture).items():
+            shutil.copy2(payload / name, private_target(runtime, target))
+            if digest(runtime / target) != hashes[name]:
+                raise ValueError("Neptune payload changed during preparation: " + name)
+        template = private_target(runtime, tool.prefix_template + "/drive_c/windows/system32/nptunix.dll")
+        helper = runtime / f"files/lib/wine/{tool.architecture}-windows/nptunix.dll"
+        template.symlink_to(os.path.relpath(helper, template.parent))
+        original_manifest = runtime / "appledeck-base-toolmanifest.vdf"
+        original_manifest.unlink(missing_ok=True)
+        shutil.copy2(runtime / "toolmanifest.vdf", original_manifest)
+        (runtime / "toolmanifest.vdf").unlink()
+        (runtime / "toolmanifest.vdf").write_text(manifest)
+        launcher = runtime / "neptune-launch"
+        launcher.unlink(missing_ok=True)
+        launcher.write_text(graphics_launcher(base, tool.architecture))
+        launcher.chmod(0o755)
+        (runtime / OWNER).write_text(json.dumps(marker, ensure_ascii=False, indent=2) + "\n")
+        if source_fingerprint(base) != source:
+            raise ValueError("基底在生成过程中发生变化，请重新生成。")
+        if previous:
+            published.parent.mkdir(exist_ok=True)
+            if published.exists():
+                shutil.rmtree(published)
+            runtime.rename(published)
+            compat.atomic_write(root / "compatibilitytool.vdf", registration)
+        else:
+            staged = temporary / "tool"
+            (staged / "runtimes").mkdir(parents=True)
+            runtime.rename(staged / relative)
+            (staged / "compatibilitytool.vdf").write_text(registration)
+            staged.rename(root)
+    finally:
+        shutil.rmtree(temporary)
+    for old in (root / "runtimes").iterdir():
+        if old != published and old.is_dir() and not old.is_symlink():
+            shutil.rmtree(old)
+    log("prepared private Neptune runtime=" + str(published))
+    return marker
+
+
+def prepare_selected(steam, state, payload, enabled, backend):
+    bases = tools.steam_tools(steam, tools.steam_catalog(steam))
+    bases.update(tools.installed_ge_tools(steam))
+    prepared, errors, hashes = {}, {}, {}
+    for key in sorted(enabled):
+        tool = bases.get(key)
+        try:
+            if tool and not tools.backend_allows(tool.architecture, backend):
+                continue
+            if not tool or not tool.root:
+                raise ValueError("请在 SteamOS 中安装对应的基底兼容层。")
+            if problem := tool.neptune_problem:
+                raise ValueError(problem)
+            arch = tool.architecture
+            if arch not in hashes:
+                hashes[arch] = validate_payload(payload, arch)
+            prepared[key] = prepare_tool(steam, payload, tool, hashes[arch])
+        except (OSError, ValueError, KeyError, IndexError, struct.error) as error:
+            log(f"cannot prepare {key}: {error}")
+            errors[key] = str(error)
+    status = state / "errors.json"
+    if errors:
+        compat.atomic_write(status, json.dumps(errors, ensure_ascii=False) + "\n")
+    else:
+        status.unlink(missing_ok=True)
+    return prepared
+
+
+def synchronize_tools(steam, state, payload, backend="neptune"):
+    return prepare_selected(steam, state, payload, tools.selections(state), backend)
+
+
+def remove_tool(steam, key):
+    if key not in tools.owned_tools(steam):
+        raise ValueError("refusing to remove unowned compatibility tool")
+    shutil.rmtree(tools.tool_dir(steam, key))

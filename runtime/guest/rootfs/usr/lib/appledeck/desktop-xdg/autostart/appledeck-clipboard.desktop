@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=AppleDeck Clipboard
+Exec=/usr/lib/appledeck/appledeck-clipboard
+Terminal=false
+Type=Application
+OnlyShowIn=KDE;
