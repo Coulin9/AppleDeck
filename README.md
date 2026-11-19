@@ -413,6 +413,10 @@ digests are in `.build/` and `build/manifest.json`.
   replaced. `./scripts/package.sh --check` runs only the checks.
 - `./scripts/package-dmg.sh` creates `build/AppleDeck.dmg` from the existing app and
   replaces any previous DMG.
+- `./scripts/gpl-source-links.sh <version>` writes `build/AppleDeck-<version>-gpl-sources.md`,
+  the table of source links for every GPL/LGPL component in the release, for the release
+  notes. Run it after the release tag is pushed. It checks every link unless you pass
+  `--no-check-links`.
 - The app icon source is `Resources/AppleDeck.icon`, compiled to `Assets.car`.
   `Resources/AppleDeck.icns` is the macOS 15 fallback. Packaging uses the Xcode selected
   by `DEVELOPER_DIR`/`xcode-select`, or `/Applications/Xcode.app` when only the Command

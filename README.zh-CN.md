@@ -359,6 +359,9 @@ cd AppleDeck
   SHA-256，并重新校验 Swift 源码和依赖；有缺失、过期或被替换的制品时，在修改现有应用包前拒绝
   打包。`./scripts/package.sh --check` 只运行校验。
 - `./scripts/package-dmg.sh` 用现有应用生成 `build/AppleDeck.dmg`，并替换同名 DMG。
+- `./scripts/gpl-source-links.sh <版本>` 生成 `build/AppleDeck-<版本>-gpl-sources.md`，即该版本所有
+  GPL/LGPL 组件的源码链接表，用于发布说明。请在推送发布标签后运行；默认会检查每个链接，
+  加 `--no-check-links` 可跳过。
 - 应用图标源工程为 `Resources/AppleDeck.icon`，编译为 `Assets.car`；`Resources/AppleDeck.icns`
   是 macOS 15 的兼容图标。打包使用 `DEVELOPER_DIR`/`xcode-select` 指定的 Xcode；若只选中了
   Command Line Tools，则使用 `/Applications/Xcode.app`。
