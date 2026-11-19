@@ -39,6 +39,8 @@ Not covered by any license of this project:
 
 Third-party software bundled in AppleDeck.app is listed with its licenses in
 runtime/licenses/THIRD-PARTY-NOTICES.txt.
+The release notes of each GitHub release link to the corresponding source of every
+GPL and LGPL component distributed in that release.
 
 SteamOS, Steam and Apple's D3DMetal.framework are not part of this project and are not
 distributed with it. Steam and SteamOS are trademarks of Valve Corporation. AppleDeck is
