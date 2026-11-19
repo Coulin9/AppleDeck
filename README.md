@@ -15,6 +15,9 @@ dedicated window, and forwards physical gamepads, keyboard, mouse and trackpad i
 
 AppleDeck was inspired by [steamac](https://github.com/fxgl/steamac).
 
+> [!NOTE]
+> AppleDeck is an AI vibe-coding project: the vast majority of its code was written by AI.
+
 > [!WARNING]
 > AppleDeck is experimental software. The VM writes directly to its disk image with no
 > snapshots or automatic rollback. AppleDeck is not affiliated with Valve or Apple.

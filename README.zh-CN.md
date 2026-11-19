@@ -14,6 +14,9 @@ SteamOS 中游戏的 Direct3D 11/12 调用直接交给宿主上 Apple 的 D3DMet
 
 AppleDeck 受 [steamac](https://github.com/fxgl/steamac) 项目启发。
 
+> [!NOTE]
+> AppleDeck 是一个 AI VibeCoding 项目，绝大部分代码由 AI 编写。
+
 > [!WARNING]
 > AppleDeck 是实验性软件。虚拟机直接写入磁盘镜像，没有快照或自动回滚。AppleDeck 与
 > Valve、Apple 均无关联，不分发 SteamOS 镜像，也不分发 Apple 的 `D3DMetal.framework`。
