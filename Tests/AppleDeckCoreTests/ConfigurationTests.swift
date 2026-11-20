@@ -71,6 +71,29 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.gameHUDLevel, .off)
         XCTAssertEqual(configuration.gameHUDPosition, .topRight)
         XCTAssertNil(configuration.sharedFolder)
+        XCTAssertNil(configuration.pendingDiskShrink)
+    }
+
+    func testPendingDiskShrinkRoundTrip() throws {
+        try withTemporaryDirectory { directory in
+            let store = ConfigurationStore(url: directory.appendingPathComponent("configuration.json"))
+            let capabilities = host()
+            let identity = SystemDiskIdentity(diskGUID: UUID(), homePartitionGUID: UUID(), capacityBytes: 128 * 1_073_741_824)
+            var configuration = VMConfiguration(cpuCount: 4, memoryGiB: 8)
+            configuration.pendingDiskShrink = PendingDiskShrink(diskImagePath: "/tmp/disk.img", capacityGiB: 64, bootStarted: true, identity: identity)
+            try store.save(configuration, for: capabilities)
+            XCTAssertEqual(try store.load(for: capabilities), configuration)
+
+            configuration.pendingDiskShrink = nil
+            try store.save(configuration, for: capabilities)
+            XCTAssertNil(try store.load(for: capabilities).pendingDiskShrink)
+        }
+    }
+
+    func testPendingDiskShrinkWithoutIdentityIsDropped() throws {
+        let data = Data(#"{"cpuCount":2,"memoryGiB":4,"pendingDiskShrink":{"diskImagePath":"/tmp/disk.img","capacityGiB":64,"bootStarted":true}}"#.utf8)
+        let configuration = try JSONDecoder().decode(VMConfiguration.self, from: data)
+        XCTAssertNil(configuration.pendingDiskShrink)
     }
 
     func testSharedFolderPersistsWhenDisconnectedAndCanBeRemoved() throws {

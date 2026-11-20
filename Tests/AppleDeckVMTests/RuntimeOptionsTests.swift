@@ -185,6 +185,39 @@ final class RuntimeOptionsTests: XCTestCase {
         }
     }
 
+    func testShrinkHomeOptionRequiresPositiveMultipleOfFour() throws {
+        try withRuntimeArguments { arguments, _ in
+            let unset = try RuntimeOptions(arguments: arguments)
+            close(unset.diskFD)
+            XCTAssertNil(unset.shrinkHomeKiB)
+            for (flags, expected) in [
+                (["--shrink-home-kib", "4"], UInt64(4)),
+                (["--shrink-home-kib", "1048576"], UInt64(1048576)),
+            ] {
+                let options = try RuntimeOptions(arguments: arguments + flags)
+                defer { close(options.diskFD) }
+                XCTAssertEqual(options.shrinkHomeKiB, expected)
+            }
+        }
+    }
+
+    func testInvalidShrinkHomeOptionsAreRejected() throws {
+        try withRuntimeArguments { arguments, _ in
+            for flags in [
+                ["--shrink-home-kib"], ["--shrink-home-kib", "0"], ["--shrink-home-kib", "6"],
+                ["--shrink-home-kib", "-4"], ["--shrink-home-kib", "1.5"],
+                ["--shrink-home-kib", "garbage"], ["--shrink-home-kib", "99999999999999999999"],
+                ["--shrink-home-kib", "8", "--shrink-home-kib", "16"],
+            ] {
+                do {
+                    let options = try RuntimeOptions(arguments: arguments + flags)
+                    close(options.diskFD)
+                    XCTFail("Invalid shrink option was accepted: \(flags)")
+                } catch { }
+            }
+        }
+    }
+
     func testInvalidModesAndMalformedArgumentsAreRejected() throws {
         try withRuntimeArguments { arguments, _ in
             for displayArguments in [

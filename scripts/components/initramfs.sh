@@ -21,6 +21,7 @@ DOS_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["initr
 E2_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["initramfs"]["e2fsprogs_sha256"])' "$ROOT/deps.lock.json")"
 BTRFS_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["initramfs"]["btrfs_progs_sha256"])' "$ROOT/deps.lock.json")"
 INPUT="$(input_digest "$NAME" \
+    script "$(sha256_file "${BASH_SOURCE[0]}")" \
     init "$(sha256_file "$INIT")" \
     install_image "$(sha256_file "$INSTALL_IMAGE")" \
     mke2fs_conf "$(sha256_file "$MKCONF")" \
@@ -68,6 +69,7 @@ cd e2fsprogs-1.47.2
     --disable-libblkid --disable-uuidd --disable-fsck --disable-e2initrd-helper
 make -j6 LDFLAGS="-static"
 cp misc/mke2fs /tools/ 2>/dev/null || cp mke2fs /tools/mke2fs
+cp e2fsck/e2fsck resize/resize2fs misc/dumpe2fs /tools/
 make install >/dev/null
 ldconfig 2>/dev/null || true
 cd /build
@@ -79,7 +81,7 @@ cd btrfs-progs-v6.14
     EXT2FS_LIBS="-L/build/e2fsprogs-1.47.2/lib/ext2fs -lext2fs"
 make -j6 btrfstune LDFLAGS="-static"
 cp btrfstune /tools/
-for tool in mkfs.fat fsck.fat mke2fs btrfstune; do
+for tool in mkfs.fat fsck.fat mke2fs e2fsck resize2fs dumpe2fs btrfstune; do
     file "/tools/$tool" | grep -q "statically linked" || {
         echo "initramfs tool is not static: $tool" >&2
         file "/tools/$tool" >&2

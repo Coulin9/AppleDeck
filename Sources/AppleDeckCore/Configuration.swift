@@ -121,6 +121,21 @@ public struct VMSharedFolder: Codable, Equatable, Sendable {
     }
 }
 
+public struct PendingDiskShrink: Codable, Equatable, Sendable {
+    public var diskImagePath: String
+    public var capacityGiB: Int
+    public var bootStarted: Bool
+    public var identity: SystemDiskIdentity
+
+    public init(diskImagePath: String, capacityGiB: Int, bootStarted: Bool = false,
+                identity: SystemDiskIdentity) {
+        self.diskImagePath = diskImagePath
+        self.capacityGiB = capacityGiB
+        self.bootStarted = bootStarted
+        self.identity = identity
+    }
+}
+
 public struct VMConfiguration: Codable, Equatable, Sendable {
     public var diskImagePath: String?
     public var cpuCount: Int
@@ -134,6 +149,7 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
     public var gameHUDPosition: GameHUDPosition
     public var sharedFolder: VMSharedFolder?
     public var network: VMNetworkConfiguration
+    public var pendingDiskShrink: PendingDiskShrink?
 
     public init(diskImagePath: String? = nil, cpuCount: Int, memoryGiB: Int,
                 graphicsBackend: GraphicsBackend = .neptune,
@@ -144,7 +160,8 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
                 gameHUDPosition: GameHUDPosition = .topRight,
                 display: VMDisplayConfiguration = VMDisplayConfiguration(),
                 sharedFolder: VMSharedFolder? = nil,
-                network: VMNetworkConfiguration = VMNetworkConfiguration()) {
+                network: VMNetworkConfiguration = VMNetworkConfiguration(),
+                pendingDiskShrink: PendingDiskShrink? = nil) {
         self.diskImagePath = diskImagePath
         self.cpuCount = cpuCount
         self.memoryGiB = memoryGiB
@@ -157,12 +174,13 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
         self.gameHUDPosition = gameHUDPosition
         self.sharedFolder = sharedFolder
         self.network = network
+        self.pendingDiskShrink = pendingDiskShrink
     }
 
     private enum CodingKeys: String, CodingKey {
         case diskImagePath, cpuCount, memoryGiB, display, graphicsBackend
         case d3dMetalFrameworkPath, neptuneApertureMiB, neptuneMultiRing, sharedFolder, network
-        case gameHUDLevel, gameHUDPosition
+        case gameHUDLevel, gameHUDPosition, pendingDiskShrink
     }
 
     public init(from decoder: Decoder) throws {
@@ -184,6 +202,8 @@ public struct VMConfiguration: Codable, Equatable, Sendable {
         gameHUDPosition = try container.decodeIfPresent(GameHUDPosition.self, forKey: .gameHUDPosition) ?? .topRight
         sharedFolder = try container.decodeIfPresent(VMSharedFolder.self, forKey: .sharedFolder)
         network = try container.decodeIfPresent(VMNetworkConfiguration.self, forKey: .network) ?? VMNetworkConfiguration()
+        // A pending shrink written without a disk identity cannot be resumed.
+        pendingDiskShrink = try? container.decodeIfPresent(PendingDiskShrink.self, forKey: .pendingDiskShrink)
     }
 
     public static func defaults(for host: HostCapabilities) -> VMConfiguration {

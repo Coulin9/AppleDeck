@@ -9,6 +9,9 @@ final class AppModel: ObservableObject {
     let deployment = DiskDeployment()
     @Published var showDeployment = false
     @Published private(set) var hasUsableDisk = false
+    @Published private(set) var diskUsage: SystemDiskUsage?
+    @Published private(set) var diskResizing = false
+    @Published private(set) var diskResizeError: String?
     @Published var configuration: VMConfiguration {
         didSet {
             if configuration.diskImagePath != oldValue.diskImagePath { refreshDiskAvailability() }
@@ -30,6 +33,10 @@ final class AppModel: ObservableObject {
         configuration = .defaults(for: host)
         reload()
         deployment.onInstalled = { [weak self] url in self?.useDisk(url, startAfterSelection: true) }
+        vm.onSettled = { [weak self] in
+            self?.refreshDiskAvailability()
+            self?.finishPendingDiskShrink()
+        }
     }
     func refreshDisplayCapabilities() {
         let launcherScreen = NSApplication.shared.windows.first(where: { $0.title == "AppleDeck" })?.screen
@@ -48,7 +55,10 @@ final class AppModel: ObservableObject {
     func refreshDiskAvailability() {
         let wasAvailable = hasUsableDisk
         hasUsableDisk = diskIsUsable
-        if wasAvailable && !hasUsableDisk && !vm.busy && !deployment.busy {
+        if let path = configuration.diskImagePath, hasUsableDisk {
+            diskUsage = try? SteamOSDisk.systemDiskUsage(at: URL(fileURLWithPath: path))
+        } else { diskUsage = nil }
+        if wasAvailable && !hasUsableDisk && !vm.busy && !deployment.busy && !diskResizing {
             showDeployment = true
         }
     }
@@ -56,22 +66,59 @@ final class AppModel: ObservableObject {
         refreshDiskAvailability()
         if !vm.busy && !hasUsableDisk { showDeployment = true }
     }
+    private var startAfterDiskResize = false
     func start() {
         guard !vm.busy, !deployment.busy, !starting else { return }
+        if pendingDiskShrink?.bootStarted == true {
+            // The guest already shrank its file system on the previous boot;
+            // finish the host-side shrink before the disk can be used again.
+            if !diskResizing {
+                startAfterDiskResize = true
+                finishPendingDiskShrink()
+            }
+            return
+        }
+        guard !diskResizing else { return }
         refreshDiskAvailability()
         guard hasUsableDisk, configuration.diskImagePath != nil else { showDeployment = true; return }
         starting = true
         defer { starting = false }
-        vm.start(configuration: configuration, host: host, display: displayCapabilities)
+        var shrinkHomeKiB: UInt64?
+        var markBootStarted: (() -> Void)?
+        if let pending = pendingDiskShrink, !pending.bootStarted {
+            do {
+                shrinkHomeKiB = try SteamOSDisk.homeShrinkTargetKiB(
+                    at: URL(fileURLWithPath: pending.diskImagePath),
+                    toCapacityGiB: pending.capacityGiB, expected: pending.identity)
+                markBootStarted = { [weak self] in
+                    self?.configuration.pendingDiskShrink =
+                        PendingDiskShrink(diskImagePath: pending.diskImagePath,
+                                          capacityGiB: pending.capacityGiB,
+                                          bootStarted: true, identity: pending.identity)
+                }
+            } catch {
+                configuration.pendingDiskShrink = nil
+                diskResizeError = error.localizedDescription
+            }
+        }
+        // willLaunch runs after every pre-launch check passed, so bootStarted
+        // is persisted only when the guest actually gets the shrink request.
+        vm.start(configuration: configuration, host: host, display: displayCapabilities,
+                 shrinkHomeKiB: shrinkHomeKiB, willLaunch: markBootStarted)
     }
 
     func startFromCommandLineIfRequested() {
         guard commandLineStartPending else { return }
-        commandLineStartPending = false
         guard loadError == nil else { return }
+        if pendingDiskShrink?.bootStarted == true {
+            finishPendingDiskShrink()
+            return
+        }
+        commandLineStartPending = false
         start()
     }
     private func useDisk(_ url: URL, startAfterSelection: Bool) {
+        configuration.pendingDiskShrink = nil
         configuration.diskImagePath = url.path
         guard saveError == nil, loadError == nil else { return }
         if startAfterSelection {
@@ -98,6 +145,7 @@ final class AppModel: ObservableObject {
         }
         refreshDisplayCapabilities()
         refreshDiskAvailability()
+        finishPendingDiskShrink()
     }
     private func save() {
         guard !vm.busy, let store else { return }
@@ -173,7 +221,7 @@ final class AppModel: ObservableObject {
     }
 
     func chooseDisk(startAfterSelection: Bool = false) {
-        guard !vm.busy, !deployment.busy else { return }
+        guard !vm.busy, !deployment.busy, !diskResizing else { return }
         let panel = NSOpenPanel()
         panel.title = String(localized: "Choose Existing System Disk")
         panel.canChooseFiles = true
@@ -189,17 +237,124 @@ final class AppModel: ObservableObject {
             useDisk(url, startAfterSelection: startAfterSelection)
         } catch { saveError = error.localizedDescription }
     }
+
+    private var diskResizeTask: Task<Void, Never>?
+    var onDiskResizeFinished: (() -> Void)?
+
+    var pendingDiskShrink: PendingDiskShrink? {
+        guard let pending = configuration.pendingDiskShrink,
+              pending.diskImagePath == configuration.diskImagePath else { return nil }
+        return pending
+    }
+
+    /// Grow applies on the host immediately; shrink is scheduled for the next
+    /// boot so the guest can reduce its home file system first.
+    func applyDiskCapacity(_ newCapacityGiB: Int) {
+        guard !vm.busy, !deployment.busy, !diskResizing,
+              let usage = diskUsage, let path = configuration.diskImagePath,
+              newCapacityGiB >= usage.minimumCapacityGiB,
+              newCapacityGiB <= usage.maximumCapacityGiB else { return }
+        let newBytes = UInt64(newCapacityGiB) * 1_073_741_824
+        guard newBytes != usage.capacityBytes else { return }
+        let url = URL(fileURLWithPath: path)
+        diskResizeError = nil
+        if newBytes > usage.capacityBytes {
+            configuration.pendingDiskShrink = nil
+            diskResizing = true
+            diskResizeTask = Task {
+                do {
+                    try await Task.detached { try SteamOSDisk.growSystem(at: url, toCapacityGiB: newCapacityGiB) }.value
+                } catch {
+                    diskResizeError = error.localizedDescription
+                }
+                diskResizing = false
+                refreshDiskAvailability()
+                let done = onDiskResizeFinished
+                onDiskResizeFinished = nil
+                done?()
+            }
+        } else {
+            do {
+                _ = try SteamOSDisk.homeShrinkTargetKiB(at: url, toCapacityGiB: newCapacityGiB,
+                                                        expected: usage.identity)
+                configuration.pendingDiskShrink = PendingDiskShrink(
+                    diskImagePath: path, capacityGiB: newCapacityGiB, identity: usage.identity)
+            } catch {
+                diskResizeError = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelDiskShrink() {
+        guard !vm.busy, !diskResizing else { return }
+        configuration.pendingDiskShrink = nil
+    }
+
+    /// Disk errors that can succeed on retry keep the scheduled shrink; any
+    /// other failure clears it and is shown to the user.
+    private static let retryableDiskErrors: Set<String> = [
+        String(localized: "The SteamOS disk is in use. Shut down the virtual machine first."),
+        String(localized: "Could not lock the system disk for resizing."),
+        String(localized: "Could not lock the staged disk image."),
+    ]
+
+    /// Host-side second phase of a scheduled shrink. Runs at app launch, before
+    /// the next VM start, and on VM exit paths that return (the in-process VM
+    /// terminates the app on a normal guest shutdown).
+    private func finishPendingDiskShrink() {
+        guard !vm.busy, !deployment.busy, !diskResizing,
+              let pending = pendingDiskShrink, pending.bootStarted,
+              let path = configuration.diskImagePath else { return }
+        let url = URL(fileURLWithPath: path)
+        diskResizing = true
+        diskResizeError = nil
+        diskResizeTask = Task {
+            do {
+                try await Task.detached {
+                    try SteamOSDisk.shrinkSystem(at: url, toCapacityGiB: pending.capacityGiB,
+                                                 expected: pending.identity)
+                }.value
+                configuration.pendingDiskShrink = nil
+            } catch {
+                let message = error.localizedDescription
+                diskResizeError = String(localized: "The disk could not be shrunk. \(message)")
+                if !Self.retryableDiskErrors.contains(message) {
+                    configuration.pendingDiskShrink = nil
+                }
+            }
+            diskResizing = false
+            refreshDiskAvailability()
+            let done = onDiskResizeFinished
+            onDiskResizeFinished = nil
+            done?()
+            let relaunch = startAfterDiskResize
+            startAfterDiskResize = false
+            if relaunch { start() }
+            startFromCommandLineIfRequested()
+        }
+    }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var vm: VMProcess?
     var deployment: DiskDeployment?
+    var model: AppModel?
     private var quitting = false
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let model, model.diskResizing {
+            if !quitting {
+                quitting = true
+                model.onDiskResizeFinished = { [weak self, weak sender] in
+                    self?.quitting = false
+                    sender?.reply(toApplicationShouldTerminate: true)
+                }
+            }
+            return .terminateLater
+        }
         if let deployment, deployment.busy {
             if !quitting {
                 quitting = true
@@ -221,8 +376,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard vm.busy else { return .terminateNow }
         quitting = true
         vm.onExit = { [weak self, weak sender] in
-            self?.quitting = false
-            sender?.reply(toApplicationShouldTerminate: true)
+            // A pending disk-shrink finalize may start just before this exit
+            // callback fires; wait for it before letting the app quit.
+            if self?.model?.diskResizing == true {
+                self?.model?.onDiskResizeFinished = { [weak self, weak sender] in
+                    self?.quitting = false
+                    sender?.reply(toApplicationShouldTerminate: true)
+                }
+            } else {
+                self?.quitting = false
+                sender?.reply(toApplicationShouldTerminate: true)
+            }
         }
         vm.stop()
         return .terminateLater
@@ -239,6 +403,7 @@ struct AppleDeckApp: App {
             MainView(model: model, vm: model.vm, deployment: model.deployment) {
                 delegate.vm = model.vm
                 delegate.deployment = model.deployment
+                delegate.model = model
             }
         }.defaultSize(width: 540, height: 620)
         .defaultLaunchBehavior(.presented)
@@ -266,7 +431,7 @@ private struct MainView: View {
                 }
                 HStack {
                     Button("Start") { model.start() }
-                        .disabled(vm.busy || deployment.busy || model.loadError != nil)
+                        .disabled(vm.busy || deployment.busy || model.loadError != nil || model.diskResizing)
                     Button("Shut Down") { vm.stop() }.disabled(!vm.busy || vm.state == .stopping)
                     Button("Force Stop") { confirmForce = true }.disabled(!vm.busy)
                     SettingsLink { Text("Open Settings") }
@@ -284,7 +449,7 @@ private struct MainView: View {
             Section("Configuration") {
                 LabeledContent("Disk", value: model.hasUsableDisk ? (model.configuration.diskImagePath ?? "") : String(localized: "No usable system disk")).textSelection(.enabled)
                 if !model.hasUsableDisk {
-                    Button("Choose System Disk or Install SteamOS") { model.showDeployment = true }.disabled(vm.busy)
+                    Button("Choose System Disk or Install SteamOS") { model.showDeployment = true }.disabled(vm.busy || model.diskResizing)
                 }
                 if let error = model.loadError {
                     Text(error).foregroundStyle(.red).textSelection(.enabled)
@@ -321,6 +486,39 @@ private struct SettingsView: View {
     @ObservedObject var vm: VMProcess
     @ObservedObject var deployment: DiskDeployment
     @State private var language = AppLanguage.selected
+    @State private var requestedGiB: Int?
+    @State private var confirmApply = false
+
+    private var capacityValid: Bool {
+        guard let request = requestedGiB, let usage = model.diskUsage else { return false }
+        return UInt64(request) * 1_073_741_824 != usage.capacityBytes
+            && request >= usage.minimumCapacityGiB
+            && request <= usage.maximumCapacityGiB
+    }
+
+    private func capacityLabel(_ bytes: UInt64) -> String {
+        let gib = Double(bytes) / 1_073_741_824
+        if bytes % 1_073_741_824 == 0 {
+            return String(localized: "\(Int(gib)) GB")
+        }
+        return String(localized: "\(gib.formatted(.number.precision(.fractionLength(1)))) GB")
+    }
+
+    private var applyMessage: String {
+        guard let request = requestedGiB, let usage = model.diskUsage else { return "" }
+        let currentGiB = Int(usage.capacityBytes / 1_073_741_824)
+        if request > currentGiB {
+            return String(localized: "Expand the system disk from \(currentGiB) GB to \(request) GB?")
+        }
+        return String(localized: "The disk will be shrunk to \(request) GB the next time the virtual machine starts. SteamOS reduces its home file system during startup, which may take several minutes; the image is reduced after the virtual machine shuts down.")
+    }
+
+    private func applyCapacityChange() {
+        guard let request = requestedGiB, let usage = model.diskUsage,
+              request >= usage.minimumCapacityGiB,
+              request <= usage.maximumCapacityGiB else { return }
+        model.applyDiskCapacity(request)
+    }
 
     private var resolutionSelection: Binding<DisplayResolution> {
         Binding(get: { model.configuration.display.resolution }, set: { resolution in
@@ -357,10 +555,42 @@ private struct SettingsView: View {
             Section("Guest Disk") {
                 if let path = model.configuration.diskImagePath {
                     Text(path).textSelection(.enabled)
-                    Button("Clear Disk Path") { model.configuration.diskImagePath = nil }
+                    if let usage = model.diskUsage {
+                        LabeledContent("Current Capacity", value: capacityLabel(usage.capacityBytes))
+                        LabeledContent("Used on Mac", value: ByteCountFormatter.string(fromByteCount: Int64(usage.allocatedBytes), countStyle: .file))
+                        if let pending = model.pendingDiskShrink {
+                            Text(pending.bootStarted
+                                 ? String(localized: "Shrinking to \(pending.capacityGiB) GB will finish the next time AppleDeck opens or before the next startup.")
+                                 : String(localized: "Shrinking to \(pending.capacityGiB) GB is scheduled for the next startup."))
+                                .font(.callout).foregroundStyle(.secondary)
+                            Button("Cancel Shrink") { model.cancelDiskShrink() }
+                        } else {
+                            HStack {
+                                TextField("New Capacity", value: $requestedGiB, format: .number)
+                                Text("GB").foregroundStyle(.secondary)
+                            }
+                            Text("Between \(usage.minimumCapacityGiB) and \(usage.maximumCapacityGiB) GB.")
+                                .font(.callout).foregroundStyle(.secondary)
+                            Button("Apply…") { confirmApply = true }
+                                .disabled(!capacityValid || vm.busy || deployment.busy || model.diskResizing)
+                        }
+                    }
+                    if model.diskResizing {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Resizing the system disk…")
+                        }
+                    }
+                    if let error = model.diskResizeError {
+                        Text(error).foregroundStyle(.red).textSelection(.enabled)
+                    }
+                    Button("Clear Disk Path") {
+                        model.configuration.pendingDiskShrink = nil
+                        model.configuration.diskImagePath = nil
+                    }
                 } else { Text("No disk selected").foregroundStyle(.secondary) }
                 Button("Choose Existing File") { model.chooseDisk() }
-            }.disabled(vm.busy)
+            }.disabled(vm.busy || model.diskResizing)
             Section("Shared Folder") {
                 if let folder = model.configuration.sharedFolder {
                     Text(folder.path).textSelection(.enabled)
@@ -483,6 +713,13 @@ private struct SettingsView: View {
                 if let error = model.saveError { Text(error).foregroundStyle(.red).textSelection(.enabled) }
             }
         }.formStyle(.grouped)
-            .disabled(deployment.busy)
+            .disabled(deployment.busy || model.diskResizing)
+            .confirmationDialog("Resize System Disk", isPresented: $confirmApply) {
+                Button("Apply") { applyCapacityChange() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text(applyMessage)
+            }
+            .onChange(of: model.diskUsage) { requestedGiB = nil }
     }
 }

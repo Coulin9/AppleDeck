@@ -57,4 +57,27 @@ final class RuntimeDiskLockTests: XCTestCase {
         let reacquired = try RuntimeOptions(arguments: arguments(disk: alias))
         close(reacquired.diskFD)
     }
+
+    func testRenamedOverDiskPathFailsIdentityCheckUntilReopened() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let disk = root.appendingPathComponent("disk.img")
+        let replacement = root.appendingPathComponent("replacement.img")
+        try Data("a".utf8).write(to: disk)
+        try Data("b".utf8).write(to: replacement)
+        let fd = open(disk.path, O_RDWR | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        defer { close(fd) }
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        XCTAssertTrue(diskFDMatchesPath(fd, path: disk.path))
+        XCTAssertEqual(rename(replacement.path, disk.path), 0)
+        XCTAssertFalse(diskFDMatchesPath(fd, path: disk.path))
+        let fresh = open(disk.path, O_RDWR | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(fresh, 0)
+        defer { close(fresh) }
+        XCTAssertEqual(flock(fresh, LOCK_EX | LOCK_NB), 0)
+        XCTAssertTrue(diskFDMatchesPath(fresh, path: disk.path))
+    }
 }

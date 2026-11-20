@@ -38,8 +38,10 @@ final class VMProcess: ObservableObject {
     private var fatalErrorReceived = false
     private var wasReady = false
     var onExit: (() -> Void)?
+    var onSettled: (() -> Void)?
 
-    func start(configuration: VMConfiguration, host: HostCapabilities, display: HostDisplayCapabilities?) {
+    func start(configuration: VMConfiguration, host: HostCapabilities, display: HostDisplayCapabilities?,
+               shrinkHomeKiB: UInt64? = nil, willLaunch: (() -> Void)? = nil) {
         guard !busy, runtime == nil else { return }
         workContextWarning = nil
         uu = UUPluginStatus()
@@ -96,6 +98,9 @@ final class VMProcess: ObservableObject {
                 "--game-hud-level", String(configuration.gameHUDLevel.rawValue),
                 "--game-hud-position", configuration.gameHUDPosition.rawValue,
             ]
+            if let shrinkHomeKiB {
+                arguments += ["--shrink-home-kib", "\(shrinkHomeKiB)"]
+            }
             if let framework = configuration.d3dMetalFrameworkPath {
                 arguments += ["--d3dmetal-framework", framework]
             }
@@ -130,6 +135,7 @@ final class VMProcess: ObservableObject {
             fatalErrorReceived = false
             wasReady = false
             error = nil
+            willLaunch?()
             state = .starting
             Task { @MainActor [self] in
                 do { try await rt.start() }
@@ -200,6 +206,7 @@ final class VMProcess: ObservableObject {
         resetGraphics()
         reportHandler = nil
         runtimeLog = nil
+        onSettled?()
     }
 
     private func resetGraphics() {
@@ -261,6 +268,7 @@ final class VMProcess: ObservableObject {
             state = .failed
             if error == nil { error = String(localized: "The virtual machine process exited (status \(result)).") }
         } else { state = .idle }
+        onSettled?()
         onExit?()
     }
 

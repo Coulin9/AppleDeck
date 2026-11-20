@@ -65,6 +65,9 @@ public final class DiskInstallerVM {
             guard flock(targetFD, LOCK_EX | LOCK_NB) == 0 else {
                 throw RuntimeError(String(localized: "The SteamOS disk is in use. Shut down the virtual machine first."))
             }
+            guard diskFDMatchesPath(targetFD, path: target) else {
+                throw RuntimeError("disk was replaced while it was being opened; try again")
+            }
             let cmdline: String
             let supportingDisk: String
             switch operation {

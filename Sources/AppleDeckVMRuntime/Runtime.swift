@@ -135,6 +135,9 @@ public final class Runtime {
                 ))
                 cmdline += folder.readOnly ? " appledeck.share=ro" : " appledeck.share=rw"
             }
+            if let shrinkHomeKiB = options.shrinkHomeKiB {
+                cmdline += " appledeck.shrink_home=\(shrinkHomeKiB)"
+            }
             try krunCheck("krun_set_kernel", krun_set_kernel(ctx, kernel, 0, initrd, cmdline))
             try krunCheck("krun_add_disk2(vda)", krun_add_disk2(ctx, "vda", options.disk, 0, false))
             try krunCheck("krun_add_disk2(vdb)", krun_add_disk2(ctx, "vdb", options.resources.appendingPathComponent("appledeck-layer.img").path, 0, true))

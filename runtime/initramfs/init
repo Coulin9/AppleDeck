@@ -42,6 +42,10 @@
 #   appledeck.provision=1  first boot of a launcher-created disk: format and fill
 #                      the blank partitions from the payload disk (see "provisioning")
 #   appledeck.config=1   apply the launcher's config payload disk (see "config payload")
+#   appledeck.shrink_home=KiB  shrink the ext4 filesystem on the 'home' partition
+#                      to KiB before switch_root; the GPT is left untouched so
+#                      the launcher can shrink the partition after the VM exits.
+#                      Failures are logged and never block the boot (see "home shrink")
 #   appledeck.ssh=0|1    0: disable SSH; 1: enable SSH independently of Steam Devkit
 #                       absent: use the guest's persistent enablement
 #   appledeck.share=ro|rw  mount the host VirtioFS share at /run/appledeck/shared
@@ -583,6 +587,76 @@ fat_check() { # fat_check <dev> <label>
     return 0
 }
 fat_check "$ESP_DEV" esp
+
+# ---------------------------------------------------------------- home shrink
+# appledeck.shrink_home=<KiB> (contract "shrink home", host = launcher, guest =
+# this stage): the launcher wants the 'home' ext4 filesystem down to KiB so it
+# can shrink the GPT partition and truncate the disk image once the VM has
+# exited. Only the filesystem is touched here; the partition table is never
+# modified. home is never mounted in the initramfs, so a normal boot - which
+# has only fsck'd the unmounted esp/efi - can resize it freely. The layer's
+# systemd-growfs@home.service drop-in (ConditionKernelCommandLine=
+# !appledeck.shrink_home) keeps fstab's x-systemd.growfs from re-growing the
+# filesystem to the partition size during this same boot - also when the
+# shrink below is skipped or fails (the launcher then sees the filesystem
+# does not fit and a later normal boot without the parameter re-grows it).
+# Any failure - missing partition, an uncleanly checked or unresizable
+# filesystem - is reported on the console and the boot continues unchanged.
+home_fs_kib() { # home_fs_kib <dev> -> ext4 size in KiB (empty when unreadable)
+    set -- $(/bin/dumpe2fs -h "$1" 2>/dev/null \
+        | awk '/^Block count:/ { b = $3 } /^Block size:/ { s = $3 } END { if (b && s) print b, s }')
+    [ $# = 2 ] && echo $(( $1 * $2 / 1024 ))
+}
+SHRINK_KIB=$(getarg appledeck.shrink_home)
+case $SHRINK_KIB in
+    "") ;;
+    *[!0-9]*|0*)
+        warn "ignoring appledeck.shrink_home='$SHRINK_KIB' (a positive multiple-of-4 KiB count is expected)" ;;
+    *)
+        if [ ${#SHRINK_KIB} -gt 16 ] || [ $((SHRINK_KIB % 4)) -ne 0 ]; then
+            warn "ignoring appledeck.shrink_home='$SHRINK_KIB' (a positive multiple-of-4 KiB count is expected)"
+        elif [ "$(getarg appledeck.provision)" = 1 ]; then
+            msg "appledeck.shrink_home ignored while provisioning"
+        elif wait_part home; then
+            HOME_DEV=$(part_dev home)
+            _cur_kib=$(home_fs_kib "$HOME_DEV")
+            if [ -z "$_cur_kib" ]; then
+                warn "home shrink: cannot read the ext4 size of $HOME_DEV; not shrunk"
+            elif [ "$_cur_kib" -le "$SHRINK_KIB" ]; then
+                msg "home ($HOME_DEV) is already $_cur_kib KiB (<= $SHRINK_KIB); skipping shrink"
+            else
+                msg "shrinking home ($HOME_DEV) from $_cur_kib KiB to $SHRINK_KIB KiB"
+                _out=$(/bin/e2fsck -f -p "$HOME_DEV" 2>&1); _rc=$?
+                # e2fsck status is a bitmask; only a fully clean/corrected
+                # filesystem (0, 1) may be resized. Bit 2 = reboot required,
+                # bit 4 = uncorrected errors: leave the resize for next time.
+                case $_rc in
+                    0|1)
+                        if ! _out=$(/bin/resize2fs "$HOME_DEV" "${SHRINK_KIB}K" 2>&1); then
+                            warn "resize2fs $HOME_DEV ${SHRINK_KIB}K failed; home not shrunk:"
+                            echo "$_out" | while IFS= read -r _l; do [ -n "$_l" ] && warn "  resize2fs: $_l"; done
+                        else
+                            _new_kib=$(home_fs_kib "$HOME_DEV")
+                            if [ -n "$_new_kib" ]; then
+                                msg "home ($HOME_DEV) shrunk to $_new_kib KiB (target $SHRINK_KIB)"
+                                [ "$_new_kib" -gt "$SHRINK_KIB" ] \
+                                    && warn "home ($HOME_DEV) is $_new_kib KiB, above target $SHRINK_KIB"
+                            else
+                                warn "home shrink: resize2fs finished but the ext4 size of $HOME_DEV is unreadable"
+                            fi
+                        fi ;;
+                    2|3)
+                        warn "e2fsck $HOME_DEV corrected errors but wants a reboot (exit $_rc); home not shrunk this boot:"
+                        echo "$_out" | while IFS= read -r _l; do [ -n "$_l" ] && warn "  e2fsck: $_l"; done ;;
+                    *)
+                        warn "e2fsck -f -p $HOME_DEV failed (exit $_rc); home not shrunk:"
+                        echo "$_out" | while IFS= read -r _l; do [ -n "$_l" ] && warn "  e2fsck: $_l"; done ;;
+                esac
+            fi
+        else
+            warn "appledeck.shrink_home set but no partition labelled 'home'; not shrunk"
+        fi ;;
+esac
 
 # ---------------------------------------------------------------- esp access
 # The esp is mounted read-only for reading the state, and read-write only for

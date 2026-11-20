@@ -29,6 +29,15 @@ public nonisolated func report(_ line: String) {
     }
 }
 
+// Confirms a just-locked descriptor still refers to the file at `path`; a disk
+// swapped by rename between open and lock would otherwise go unnoticed.
+func diskFDMatchesPath(_ fd: Int32, path: String) -> Bool {
+    var opened = stat()
+    var current = stat()
+    return fstat(fd, &opened) == 0 && stat(path, &current) == 0
+        && opened.st_dev == current.st_dev && opened.st_ino == current.st_ino
+}
+
 struct NeptuneSupport {
     enum Backend {
         case d3dmetal(framework: URL, version: String?)
@@ -65,6 +74,9 @@ public struct RuntimeOptions {
     let neptuneReasons: [GraphicsBackend: String]
     let sharedFolder: VMSharedFolder?
     let network: VMNetworkConfiguration
+    // Target size for the 'home' ext4 filesystem in KiB; the initramfs shrinks
+    // it on the next boot so the host can shrink the GPT after the VM exits.
+    let shrinkHomeKiB: UInt64?
 
     var contents: URL { resources.deletingLastPathComponent().deletingLastPathComponent() }
     var renderer: URL { contents.appendingPathComponent("Helpers/virgl_render_server") }
@@ -77,6 +89,7 @@ public struct RuntimeOptions {
             "--game-hud", "--game-hud-level", "--game-hud-position",
             "--display-width", "--display-height", "--display-refresh-rate",
             "--host-display-id", "--shared-folder", "--shared-folder-read-only", "--network-config",
+            "--shrink-home-kib",
         ]
         var values: [String: String] = [:]
         var index = 0
@@ -134,6 +147,12 @@ public struct RuntimeOptions {
             guard let id = UInt32(text), id > 0 else { throw RuntimeError("invalid host display id: \(text)") }
             hostDisplayID = id
         } else { hostDisplayID = nil }
+        if let text = values["--shrink-home-kib"] {
+            guard let kib = UInt64(text), kib > 0, kib.isMultiple(of: 4) else {
+                throw RuntimeError("--shrink-home-kib expects a positive multiple of 4: \(text)")
+            }
+            shrinkHomeKiB = kib
+        } else { shrinkHomeKiB = nil }
         guard let mib = UInt32(exactly: memory.multipliedReportingOverflow(by: 1024).partialValue),
               !memory.multipliedReportingOverflow(by: 1024).overflow else {
             throw RuntimeError("memory size is too large")
@@ -226,6 +245,10 @@ public struct RuntimeOptions {
                 throw RuntimeError("disk is already in use by another VM")
             }
             throw RuntimeError("cannot lock disk: \(String(cString: strerror(error)))")
+        }
+        guard diskFDMatchesPath(fd, path: diskPath) else {
+            close(fd)
+            throw RuntimeError("disk was replaced while it was being opened; try again")
         }
         resources = resourceURL
         disk = diskPath
