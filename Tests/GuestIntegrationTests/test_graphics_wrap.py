@@ -68,6 +68,9 @@ class GraphicsWrapTests(unittest.TestCase):
         self.execed = []
         self.addCleanup(patch.stopall)
         patch.object(graphics, "multi_ring_opt_in", lambda: False).start()
+        # Existing tests must never see a real home-dir dev payload.
+        self.dev = self.root / "neptune-dev"
+        patch.object(wrap, "DEV_PAYLOAD", self.dev).start()
 
     def _make_tool(self, tool, arch):
         tool.mkdir(parents=True, exist_ok=True)
@@ -295,6 +298,77 @@ class GraphicsWrapTests(unittest.TestCase):
             argv = self.run_wrap(["waitforexitandrun", "/game/x.exe"],
                                  mode="neptune", env={"NPT_PERF": "trace"})
         self.assertEqual(argv[argv.index("NPT_PERF") + 1], "trace,multi_ring")
+
+    # --- dev Neptune payload ---
+
+    def _make_dev_payload(self, marker=True):
+        # Same layout as the packaged payload, with distinct file contents.
+        for arch in ("x86_64", "aarch64"):
+            for sub in (f"{arch}-windows", f"{arch}-unix", f"bridge/{arch}"):
+                (self.dev / sub).mkdir(parents=True)
+            for name in ("d3d11", "dxgi", "d3d12", "nptunix"):
+                (self.dev / f"{arch}-windows/{name}.dll").write_bytes(("d" + name).encode())
+            (self.dev / f"{arch}-unix/nptunix.so").write_bytes(b"devso")
+            for suffix in ("dll", "so"):
+                os.symlink(f"../../{arch}-{'windows' if suffix == 'dll' else 'unix'}/nptunix.{suffix}",
+                           self.dev / f"bridge/{arch}/nptunix.{suffix}")
+        if marker:
+            (self.dev / "payload.json").write_text("{}")
+
+    def test_dev_payload_absent_uses_packaged(self):
+        argv = self.game(mode="neptune")
+        self.assertIn("--ro-bind", argv)
+        # All binds come from the packaged payload; no dev self-bind.
+        self.assertIn(str(self.payload / "x86_64-windows/d3d11.dll"), argv)
+        self.assertNotIn(str(self.root / "neptune-dev"), argv)
+        self.assertEqual(argv[argv.index("WINEDLLPATH") + 1].split(":")[0],
+                         "/run/host/" + str(self.payload.relative_to(self.root)) + "/bridge/x86_64")
+
+    def test_dev_payload_injects_dev_sources(self):
+        self._make_dev_payload()
+        compat = self._make_prefix()
+        argv = self.game(mode="neptune", env=self._nptunix_env(compat))
+        self.assertIn("--ro-bind", argv)
+        index = argv.index(str(self.dev))
+        self.assertEqual(argv[index - 1:index + 2],
+                         ["--ro-bind", str(self.dev), str(self.dev)])
+        for name in ("d3d11", "dxgi", "d3d12"):
+            self.assertIn(str(self.dev / f"x86_64-windows/{name}.dll"), argv)
+        self.assertEqual(argv[argv.index("WINEDLLPATH") + 1].split(":")[0],
+                         str(self.dev / "bridge/x86_64"))
+        target = compat / "pfx/drive_c/windows/system32/nptunix.dll"
+        self.assertEqual(target.read_bytes(),
+                         (self.dev / "x86_64-windows/nptunix.dll").read_bytes())
+
+    def test_dev_payload_removal_restores_packaged_nptunix(self):
+        self._make_dev_payload()
+        compat = self._make_prefix()
+        self.game(mode="neptune", env=self._nptunix_env(compat))
+        target = compat / "pfx/drive_c/windows/system32/nptunix.dll"
+        self.assertEqual(target.read_bytes(), b"dnptunix")
+        for child in sorted(self.dev.rglob("*"), reverse=True):
+            if child.is_dir() and not child.is_symlink():
+                child.rmdir()
+            else:
+                child.unlink()
+        self.dev.rmdir()
+        argv = self.game(mode="neptune", env=self._nptunix_env(compat))
+        self.assertIn("--ro-bind", argv)
+        self.assertEqual(target.read_bytes(), self._nptunix_payload())
+
+    def test_dev_payload_without_marker_ignored(self):
+        self._make_dev_payload(marker=False)
+        argv = self.game(mode="neptune")
+        self.assertIn(str(self.payload / "x86_64-windows/d3d11.dll"), argv)
+        self.assertNotIn(str(self.dev), argv)
+        self.assertEqual(argv[argv.index("WINEDLLPATH") + 1].split(":")[0],
+                         "/run/host/" + str(self.payload.relative_to(self.root)) + "/bridge/x86_64")
+
+    def test_dev_payload_venus_injects_nothing(self):
+        self._make_dev_payload()
+        argv = self.game(mode="venus")
+        self.assertNotIn("--ro-bind", argv)
+        self.assertNotIn("APPLEDECK_NEPTUNE_BACKEND", argv)
 
     # --- prefix nptunix.dll sync ---
 

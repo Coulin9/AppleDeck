@@ -23,6 +23,9 @@ import appledeck_graphics as graphics
 
 PAYLOAD = graphics.PAYLOAD
 CONTAINER_PAYLOAD = graphics.CONTAINER_PAYLOAD
+# Opt-in development payload with the same layout as PAYLOAD; used instead of
+# the packaged payload when it contains payload.json (fast iteration).
+DEV_PAYLOAD = Path.home() / ".local/share/appledeck/neptune-dev"
 GRAPHICS_DLLS = graphics.GRAPHICS_DLLS
 SRT_BWRAP_REL = "libexec/steam-runtime-tools-0/srt-bwrap"
 
@@ -129,7 +132,19 @@ def _set_casefold(path):
             os.close(fd)
 
 
-def _ensure_prefix_nptunix(compat, arch):
+def _payload():
+    """(root, container_root, extra_binds) for the active Neptune payload.
+
+    The dev payload is bound at its own path so it is visible inside the
+    container whether or not the home directory is shared.
+    """
+    if (DEV_PAYLOAD / "payload.json").is_file():
+        return DEV_PAYLOAD, DEV_PAYLOAD, \
+            ["--ro-bind", str(DEV_PAYLOAD), str(DEV_PAYLOAD)]
+    return PAYLOAD, CONTAINER_PAYLOAD, []
+
+
+def _ensure_prefix_nptunix(compat, arch, root):
     """Keep <compat>/pfx/drive_c/windows/system32/nptunix.dll byte-identical
     to the payload copy. Wine only loads a builtin that also has a file inside
     the prefix, so nptunix=b fails (c0000135) without it. On a prefix Proton
@@ -161,7 +176,7 @@ def _ensure_prefix_nptunix(compat, arch):
         return False
     system32 = node
     try:
-        payload = (PAYLOAD / f"{arch}-windows/nptunix.dll").read_bytes()
+        payload = (root / f"{arch}-windows/nptunix.dll").read_bytes()
         target = system32 / "nptunix.dll"
         if not target.is_symlink() and target.is_file() \
                 and target.read_bytes() == payload:
@@ -201,7 +216,10 @@ def _injection(mode, cmd, env):
     backend = _backend(mode)
     if arch is None or (backend == "d3dmetal" and arch != "x86_64"):
         return inject
-    bridge = PAYLOAD / "bridge" / arch
+    root, container_root, extra_binds = _payload()
+    if root != PAYLOAD:
+        _log(f"using dev Neptune payload {root}")
+    bridge = root / "bridge" / arch
     # A missing payload is a broken install, not an unsafe launch.
     if not (bridge.joinpath("nptunix.dll").is_file()
             and bridge.joinpath("nptunix.so").is_file()):
@@ -210,7 +228,7 @@ def _injection(mode, cmd, env):
     binds = []
     unsafe = False
     for name in GRAPHICS_DLLS:
-        source = PAYLOAD / f"{arch}-windows" / f"{name}.dll"
+        source = root / f"{arch}-windows" / f"{name}.dll"
         dll_dir = tool / "files/lib/wine" / providers[name] / f"{arch}-windows"
         target = dll_dir / f"{name}.dll"
         if not (source.is_file() and dll_dir.is_dir() and target.is_file()):
@@ -227,11 +245,11 @@ def _injection(mode, cmd, env):
     if unsafe:
         _log(f"unsafe bind target under {tool}: passing through")
         return []
-    if not _ensure_prefix_nptunix(env["STEAM_COMPAT_DATA_PATH"], arch):
+    if not _ensure_prefix_nptunix(env["STEAM_COMPAT_DATA_PATH"], arch, root):
         return inject
-    inject += binds
+    inject += extra_binds + binds
     dll_path = env.get("WINEDLLPATH")
-    dll_path = f"{CONTAINER_PAYLOAD}/bridge/{arch}" + (":" + dll_path if dll_path else "")
+    dll_path = f"{container_root}/bridge/{arch}" + (":" + dll_path if dll_path else "")
     inject += ["--setenv", "WINEDLLPATH", dll_path]
     overrides = env.get("WINEDLLOVERRIDES", "")
     native = ";".join(f"{name}=n" for name in GRAPHICS_DLLS)
