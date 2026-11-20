@@ -161,7 +161,28 @@ class GamePatchTests(unittest.TestCase):
             "nightreign", command, environment, "appledeck.gfx=neptune")
         self.assertEqual(actual, command)
         self.assertTrue(identity["affinity"])
+        self.assertEqual(identity["processes"], ("nightreign.exe", "start_protected"))
+        self.assertEqual(identity["game"], "nightreign.exe")
         self.assertEqual(identity["prefix"], str(Path(self.root / "compatdata/1091500/pfx").resolve()))
+
+    def test_sekiro_returns_launch_specific_identity(self):
+        command = self.command("sekiro.exe")
+        environment = dict(self.environment, SteamAppId="814380")
+        actual, _, identity = game_patches.prepare(
+            "sekiro", command, environment, "appledeck.gfx=neptune")
+        self.assertEqual(actual, command)
+        self.assertTrue(identity["affinity"])
+        self.assertEqual(identity["processes"], ("sekiro.exe",))
+        self.assertEqual(identity["game"], "sekiro.exe")
+        self.assertEqual(identity["prefix"], str(Path(self.root / "compatdata/1091500/pfx").resolve()))
+
+    def test_sekiro_rejects_other_executables(self):
+        command = self.command("launcher.exe")
+        environment = dict(self.environment, SteamAppId="814380")
+        actual, _, identity = game_patches.prepare(
+            "sekiro", command, environment, "appledeck.gfx=neptune")
+        self.assertEqual(actual, command)
+        self.assertIsNone(identity)
 
     def test_affinity_members_follow_this_launch_and_reject_reused_pids(self):
         scope = "0::/user.slice/app-steam-app2622380-101.scope\n"
@@ -177,6 +198,16 @@ class GamePatchTests(unittest.TestCase):
         members, scopes = game_launch.collect_members(processes, {101: 12}, set(), "2622380")
         self.assertEqual(members, {})
         self.assertEqual(scopes, set())
+
+    def test_affinity_members_sekiro_scope(self):
+        scope = "0::/user.slice/app-steam-app814380-201.scope\n"
+        processes = {
+            201: {"parent": 1, "started": 40, "group": scope},
+            202: {"parent": 201, "started": 41, "group": scope},
+        }
+        members, scopes = game_launch.collect_members(processes, {201: 40}, set(), "814380")
+        self.assertEqual(members, {201: 40, 202: 41})
+        self.assertEqual(scopes, {scope})
 
     def test_slow_launcher_keeps_handoff_open(self):
         self.assertEqual(game_launch.watch_finished(False, False, False, True, 120, 32),

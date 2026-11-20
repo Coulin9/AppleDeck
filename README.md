@@ -195,7 +195,7 @@ are not covered.
 
 ### Game profiles
 
-Optimisation profiles for Cyberpunk 2077, 3DMark and Elden Ring Nightreign are enabled by
+Optimisation profiles for Cyberpunk 2077, 3DMark, Elden Ring Nightreign and Sekiro are enabled by
 default. The offline sync sets the game's launch options to `appledeck-game-launch`,
 keeping existing and later user options. Complex shell launch options must be combined
 by hand. You can also set it manually in Steam:

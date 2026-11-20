@@ -118,14 +118,14 @@ def run_with_affinity(command, environment, identity):
         targets = []
         game_targets = []
         for pid, process in processes.items():
-            if process["name"] not in ("nightreign.exe", "start_protected"):
+            if process["name"] not in identity["processes"]:
                 continue
             owned = pid in members or (process["group"] in scopes and process["started"] >= earliest)
             if not owned or not same_prefix(pid, identity["prefix"]):
                 continue
             members[pid] = process["started"]
             targets.append(pid)
-            if process["name"] == "nightreign.exe":
+            if process["name"] == identity["game"]:
                 game_targets.append(pid)
             try:
                 for task in (Path("/proc") / str(pid) / "task").iterdir():

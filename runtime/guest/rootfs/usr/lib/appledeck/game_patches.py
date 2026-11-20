@@ -22,6 +22,7 @@ PATCHES = {
     "1091500": "cyberpunk2077",
     "223850": "3dmark",
     "2622380": "nightreign",
+    "814380": "sekiro",
 }
 
 
@@ -205,4 +206,12 @@ def prepare(profile, command, environment, cmdline):
         if name not in ("nightreign.exe", "start_protected_game.exe"):
             return command, environment, None
         identity["affinity"] = True
+        identity["processes"] = ("nightreign.exe", "start_protected")
+        identity["game"] = "nightreign.exe"
+    elif appid == "814380":
+        if name != "sekiro.exe":
+            return command, environment, None
+        identity["affinity"] = True
+        identity["processes"] = ("sekiro.exe",)
+        identity["game"] = "sekiro.exe"
     return command, environment, identity
