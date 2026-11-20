@@ -10,16 +10,16 @@ DOCKERFILE="$ROOT/scripts/containers/mangoapp.Dockerfile"
 read -r VERSION URL SHA < <(python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))["mangohud"]; print(d["version"],d["url"],d["sha256"])' "$ROOT/deps.lock.json")
 PATCH_SHA="$(shasum -a 256 "$PATCHES"/*.patch | shasum -a 256 | awk '{print $1}')"
 DOCKER_SHA="$(sha256_file "$DOCKERFILE")"
-INPUT="$(input_digest "$NAME" source "$SHA" patches "$PATCH_SHA" dockerfile "$DOCKER_SHA")"
+# The MangoApp builder is FROM the guest builder, so both Dockerfiles key it.
+BASE_SHA="$(sha256_file "$ROOT/scripts/containers/guest.Dockerfile")"
+INPUT="$(input_digest "$NAME" source "$SHA" patches "$PATCH_SHA" dockerfile "$DOCKER_SHA" base_dockerfile "$BASE_SHA")"
 if component_should_reuse "$NAME" "$INPUT" "$OUTDIR/mangoapp" "$OUTDIR/LICENSE"; then exit 0; fi
 
 ARCHIVE="$CACHE/MangoHud-$VERSION-Source.tar.xz"
 fetch_verified "$URL" "$ARCHIVE" "$SHA"
 require_builder
-if ! builder image exists appledeck-guest-builder; then
-    builder build --tag appledeck-guest-builder -f "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
-fi
-IMAGE="appledeck-mangoapp-builder:${DOCKER_SHA:0:12}"
+ensure_builder_image appledeck-guest-builder "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
+IMAGE="appledeck-mangoapp-builder:${DOCKER_SHA:0:12}-${BASE_SHA:0:12}"
 if ! builder image exists "$IMAGE"; then
     builder build --tag "$IMAGE" -f "$DOCKERFILE" "$ROOT/scripts/containers"
 fi

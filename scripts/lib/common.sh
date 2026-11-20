@@ -190,6 +190,17 @@ builder() {
     "$PODMAN_BIN" --connection "$PODMAN_CONNECTION" "$@"
 }
 
+# Build TAG from DOCKERFILE unless the existing image was built from the same
+# Dockerfile contents (recorded as a label), so an edited Dockerfile is never
+# silently ignored because the tag already exists.
+ensure_builder_image() { # TAG DOCKERFILE CONTEXT
+    local tag="$1" dockerfile="$2" context="$3" want have
+    want="$(sha256_file "$dockerfile")"
+    have="$(builder image inspect --format '{{index .Labels "appledeck.dockerfile"}}' "$tag" 2>/dev/null || true)"
+    [[ "$have" == "$want" ]] && return 0
+    builder build --tag "$tag" --label "appledeck.dockerfile=$want" -f "$dockerfile" "$context"
+}
+
 require_builder() {
     builder info --format '{{.Host.OS}}/{{.Host.Arch}}' >/dev/null 2>&1 \
         || die "Linux builder '$PODMAN_CONNECTION' is unavailable; run: podman machine start $PODMAN_CONNECTION"

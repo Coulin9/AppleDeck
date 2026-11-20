@@ -42,9 +42,7 @@ mkdir -p "$(dirname "$DOS_TAR")" "$OUTDIR"
 [[ "$(sha256_file "$BTRFS_TAR")" == "$BTRFS_SHA" ]] || die "btrfs-progs checksum mismatch"
 
 BUILDER_IMAGE_TAG=appledeck-guest-builder
-if ! builder image exists "$BUILDER_IMAGE_TAG" >/dev/null 2>&1; then
-    builder build --tag "$BUILDER_IMAGE_TAG" -f "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
-fi
+ensure_builder_image "$BUILDER_IMAGE_TAG" "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
 
 builder run --rm -i \
     -v "$CACHE:/cache:ro" \

@@ -38,9 +38,7 @@ fi
 
 require_builder
 BUILDER_IMAGE_TAG=appledeck-kernel-builder
-if ! builder image exists "$BUILDER_IMAGE_TAG" >/dev/null 2>&1; then
-    builder build --tag "$BUILDER_IMAGE_TAG" -f "$ROOT/scripts/containers/kernel.Dockerfile" "$ROOT/scripts/containers"
-fi
+ensure_builder_image "$BUILDER_IMAGE_TAG" "$ROOT/scripts/containers/kernel.Dockerfile" "$ROOT/scripts/containers"
 
 log "kernel build (linux 7.2.9 + $(find "$PATCHES" -type f | wc -l | tr -d ' ') patches)"
 builder run --rm \

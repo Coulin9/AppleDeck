@@ -12,9 +12,7 @@ if component_should_reuse "$NAME" "$INPUT" "$OUTDIR/appledeck-agent" "$OUTDIR/ap
 
 require_builder
 BUILDER_IMAGE_TAG=appledeck-guest-builder
-if ! builder image exists "$BUILDER_IMAGE_TAG" >/dev/null 2>&1; then
-    builder build --tag "$BUILDER_IMAGE_TAG" -f "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
-fi
+ensure_builder_image "$BUILDER_IMAGE_TAG" "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
 mkdir -p "$OUTDIR"
 builder run --rm -v "$SRC:/src:ro" \
     -v "$OUTDIR:/out" "$BUILDER_IMAGE_TAG" bash -lc '

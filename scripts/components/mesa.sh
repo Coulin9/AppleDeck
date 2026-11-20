@@ -17,8 +17,7 @@ if component_should_reuse "$NAME" "$INPUT" "$OUTDIR/root.tar"; then exit 0; fi
 
 require_builder
 BUILDER_IMAGE_TAG=appledeck-guest-builder
-# Re-evaluate the Dockerfile so cached builders gain required GLVND headers.
-builder build --tag "$BUILDER_IMAGE_TAG" -f "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
+ensure_builder_image "$BUILDER_IMAGE_TAG" "$ROOT/scripts/containers/guest.Dockerfile" "$ROOT/scripts/containers"
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR/root" "$OUTDIR/src"
 rsync -a --exclude .git "$SRC/" "$OUTDIR/src/"
