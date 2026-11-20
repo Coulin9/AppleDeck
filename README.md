@@ -368,12 +368,28 @@ git clone https://github.com/Coulin9/AppleDeck.git -b steamos-d3dmetal
 
 ```sh
 cd AppleDeck
-./build.sh                          # clean full build
-./build.sh --reuse kernel,layer     # reuse only the named artifacts
-./build.sh --reuse all              # reuse every native/guest artifact
-./build.sh --component libkrun      # build a single component
+./build.sh                          # incremental build (rebuild only changed components)
+./build.sh --clean                  # clean full build
+./build.sh --reuse kernel,layer     # strictly reuse the named artifacts (fail if stale)
+./build.sh --reuse all              # strictly reuse every native/guest artifact
+./build.sh --component libkrun      # build a single component (incremental)
 ./build.sh --list-components
 ```
+
+Fast development loop (`scripts/dev/`, the VM must be running for all but `test.sh`):
+
+```sh
+scripts/dev/test.sh [--all|REPO...]   # host-side suites of changed repositories
+scripts/dev/push-neptune.sh           # build Neptune, install it as the guest dev payload
+scripts/dev/push-neptune.sh --off     # remove the dev payload (packaged payload again)
+scripts/dev/restart.sh [--no-build]   # incremental build, package, headless VM restart
+scripts/dev/smoke.sh [--update]       # D3D11 + D3D12 check against the saved reference
+scripts/dev/perf.sh [--baseline] [N]  # uncapped D3D11 submission bench vs baseline
+```
+
+The dev payload lives in the guest at `~/.local/share/appledeck/neptune-dev`;
+`appledeck-graphics-wrap` uses it instead of `/usr/lib/appledeck/neptune` when it
+contains `payload.json`, so a Neptune change applies on the next game launch.
 
 | Component | Source | Output |
 |---|---|---|
