@@ -14,7 +14,13 @@ import tempfile
 
 source = Path(sys.argv[1])
 with tempfile.TemporaryDirectory(prefix='appledeck-package-test-') as temp:
-    root = Path(temp)
+    root = Path(temp) / 'AppleDeck'
+    root.mkdir()
+    # swift_input_digest also hashes $ROOT/../libkrun/include/*.h.
+    libkrun_include = Path(temp) / 'libkrun/include'
+    libkrun_include.mkdir(parents=True)
+    libkrun_header = libkrun_include / 'libkrun.h'
+    libkrun_header.write_text('// fixture libkrun header\n')
     (root / 'scripts/lib').mkdir(parents=True)
     (root / 'scripts/components').mkdir()
     shutil.copy(source / 'scripts/package.sh', root / 'scripts/package.sh')
@@ -154,6 +160,10 @@ stamp_write "$name" "$input" "$@"
     swift_source.write_text('// changed frontend source\n')
     rejected('changed Swift source with old frontend', 'swift')
     swift_source.write_text('// fixture source\n')
+
+    libkrun_header.write_text('// changed libkrun header\n')
+    rejected('changed libkrun header with old frontend', 'swift')
+    libkrun_header.write_text('// fixture libkrun header\n')
 
     for name in ('swift/AppleDeck', 'swift/appledeck-vm', 'swift/appledeck-diagnostics',
                  'virglrenderer/virgl_render_server', 'virglrenderer/libvirglrenderer.1.dylib'):

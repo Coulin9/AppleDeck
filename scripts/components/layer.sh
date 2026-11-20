@@ -5,8 +5,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/lib/common.s
 
 NAME=layer
 OUTDIR="$OUT/$NAME"
-GUEST="$OUT/guest-integration/rootfs"
-MESA="$OUT/mesa/root"
 AGENT="$OUT/agent/appledeck-agent"
 CLIPBOARD="$OUT/agent/appledeck-clipboard"
 MANGOAPP="$OUT/mangoapp/mangoapp"
@@ -24,8 +22,8 @@ if component_should_reuse "$NAME" "$INPUT" "$OUTDIR/appledeck-layer.img"; then e
 
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR/rootfs"
-cp -R "$GUEST/." "$OUTDIR/rootfs/"
-cp -R "$MESA/." "$OUTDIR/rootfs/"
+tar -C "$OUTDIR/rootfs" -xf "$OUT/guest-integration/rootfs.tar"
+tar -C "$OUTDIR/rootfs" -xf "$OUT/mesa/root.tar"
 tar -C "$OUTDIR/rootfs" -xf "$NEPTUNE"
 tar -C "$OUTDIR/rootfs" -xf "$UU_RUNTIME"
 tar -C "$OUTDIR/rootfs" -xf "$FEX_EAC"
