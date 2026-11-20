@@ -19,9 +19,11 @@ enum VMWindowGeometry {
         window.contentAspectRatio = pixels
         let minimumWidth = min(320, size.width)
         window.contentMinSize = NSSize(width: minimumWidth, height: minimumWidth * pixels.height / pixels.width)
-        window.setContentSize(size)
-        let x = max(visible.minX, min(center.x - window.frame.width / 2, visible.maxX - window.frame.width))
-        let y = max(visible.minY, min(center.y - window.frame.height / 2, visible.maxY - window.frame.height))
-        window.setFrameOrigin(NSPoint(x: x, y: y))
+        // Apply size and position in one step: resizing in place first can leave the
+        // window straddling another screen and trigger a screen change mid-fit.
+        var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+        frame.origin.x = max(visible.minX, min(center.x - frame.width / 2, visible.maxX - frame.width))
+        frame.origin.y = max(visible.minY, min(center.y - frame.height / 2, visible.maxY - frame.height))
+        window.setFrame(frame, display: true)
     }
 }

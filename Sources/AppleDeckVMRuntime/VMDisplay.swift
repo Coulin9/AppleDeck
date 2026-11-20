@@ -121,6 +121,8 @@ final class VMDisplay: @unchecked Sendable {
     @MainActor var displayRefreshRate: Double?
     @MainActor private var reportedGameSource: GameFrameSample.Source?
     @MainActor private var windowPixelSize: NSSize = .zero
+    @MainActor private var fittingWindow = false
+    @MainActor private var refitWindow = false
     private var screenObserver: NSObjectProtocol?
 
     @MainActor init() throws {
@@ -379,7 +381,16 @@ final class VMDisplay: @unchecked Sendable {
 
     @MainActor private func fitWindowToContent() {
         guard let window, !window.isFullScreen else { return }
+        // Moving the window can synchronously change its screen, which calls back
+        // here; refit once afterwards for the new screen instead of recursing.
+        guard !fittingWindow else { refitWindow = true; return }
+        fittingWindow = true
         VMWindowGeometry.fit(window, pixels: windowPixelSize)
+        fittingWindow = false
+        if refitWindow {
+            refitWindow = false
+            DispatchQueue.main.async { [weak self] in self?.fitWindowToContent() }
+        }
         let size = window.contentRect(forFrameRect: window.frame).size
         report("APPLEDECK display window width=\(size.width) height=\(size.height) pixels=\(Int(windowPixelSize.width))x\(Int(windowPixelSize.height))")
     }
