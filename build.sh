@@ -1,11 +1,12 @@
 #!/bin/bash
 # AppleDeck build entry point.
 #
-#   ./build.sh                          full build
+#   ./build.sh                          incremental build (rebuild only components whose inputs changed)
+#   ./build.sh --clean                  full clean rebuild
+#   ./build.sh --component NAME [--clean]   build one component (incremental unless --clean)
 #   ./build.sh --reuse kernel,layer     reuse only the named artifacts
 #   ./build.sh --reuse all              reuse every native/guest artifact
 #   ./build.sh --list-components
-#   ./build.sh --component NAME
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -38,8 +39,10 @@ COMPONENTS=(
 
 REUSE=""
 ONLY=""
+CLEAN=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --clean) CLEAN=1; shift ;;
         --reuse)
             [[ $# -ge 2 ]] || die "--reuse requires a list or 'all'"
             REUSE="$2"; shift 2 ;;
@@ -48,12 +51,13 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || die "--component requires a name"
             ONLY="$2"; shift 2 ;;
         --list-components) printf '%s\n' "${COMPONENTS[@]}"; exit 0 ;;
-        -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done
 
 if [[ -n "$REUSE" ]]; then
+    [[ $CLEAN -eq 0 ]] || die "--clean cannot be combined with --reuse"
     if [[ "$REUSE" != "all" ]]; then
         IFS=',' read -r -a requested <<< "$REUSE"
         for name in "${requested[@]}"; do
@@ -65,11 +69,16 @@ if [[ -n "$REUSE" ]]; then
     export APPLEDECK_REUSE="$REUSE"
     log "explicit reuse: $REUSE"
 else
-    export APPLEDECK_REUSE=""
-    log "full build"
-    if [[ -z "$ONLY" ]]; then
-        rm -rf "$OUT"
-        mkdir -p "$OUT"
+    if [[ $CLEAN -eq 1 ]]; then
+        export APPLEDECK_REUSE=""
+        log "full build"
+        if [[ -z "$ONLY" ]]; then
+            rm -rf "$OUT"
+            mkdir -p "$OUT"
+        fi
+    else
+        export APPLEDECK_REUSE=auto
+        log "incremental build"
     fi
 fi
 

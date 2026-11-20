@@ -68,7 +68,8 @@ swift_input_digest() {
         package "$(sha256_file "$ROOT/Package.swift")" \
         info "$(sha256_file "$ROOT/Info.plist")" \
         entitlements "$(sha256_file "$ROOT/AppleDeckVM.entitlements")" \
-        libkrun "$(sha256_file "$OUT/libkrun/libkrun.1.dylib")"
+        libkrun "$(sha256_file "$OUT/libkrun/libkrun.1.dylib")" \
+        libkrun_headers "$(cat "$ROOT"/../libkrun/include/*.h | shasum -a 256 | awk '{print $1}')"
 }
 
 git_state_digest() { # REPO
@@ -104,7 +105,7 @@ stamp_write() { # NAME INPUT_DIGEST OUTPUT...
 
 reuse_requested() {
     local name="$1"
-    [[ -n "${APPLEDECK_REUSE:-}" ]] || return 1
+    [[ -n "${APPLEDECK_REUSE:-}" && "${APPLEDECK_REUSE:-}" != auto ]] || return 1
     case " ${APPLEDECK_REUSE//,/ } " in
         *" all "*) return 0 ;;
         *" $name "*) return 0 ;;
@@ -132,7 +133,51 @@ require_reuse_artifact() { # NAME INPUT OUTPUT...
     log "reuse $1"
 }
 
+component_artifacts_current() { # NAME INPUT OUTPUT...
+    local name="$1" input="$2"; shift 2
+    local path; path="$(stamp_path "$name")"
+    [[ -f "$path" ]] || return 1
+    # Not every input digest covers the recipe or its builder Dockerfile, so
+    # also treat a recipe or referenced Dockerfile edited after the stamp as stale.
+    if [[ -f "$0" ]]; then
+        [[ "$0" -nt "$path" ]] && return 1
+        local f
+        for f in "$ROOT"/scripts/containers/*; do
+            [[ "$f" -nt "$path" ]] && grep -qF "${f##*/}" "$0" && return 1
+        done
+    fi
+    python3 - "$path" "$ROOT" "$input" "$@" <<'PY'
+import hashlib, json, os, sys
+path, root, want_input = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    d = json.load(open(path))
+except Exception:
+    sys.exit(1)
+if d.get("input") != want_input:
+    sys.exit(1)
+outputs = d.get("outputs", {})
+for out in sys.argv[4:]:
+    rel = out[len(root) + 1:] if out.startswith(root + os.sep) else out
+    if not os.path.isfile(out):
+        sys.exit(1)
+    h = hashlib.sha256()
+    with open(out, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    if outputs.get(rel) != h.hexdigest():
+        sys.exit(1)
+sys.exit(0)
+PY
+}
+
 component_should_reuse() { # NAME INPUT OUTPUT...
+    if [[ "${APPLEDECK_REUSE:-}" == auto ]]; then
+        if component_artifacts_current "$@"; then
+            log "up to date $1"
+            return 0
+        fi
+        return 1
+    fi
     if reuse_requested "$1"; then
         require_reuse_artifact "$@"
         return 0
